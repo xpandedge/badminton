@@ -41,3 +41,6 @@ apps/web/.playwright/
 
 # Claude Code local workspace (worktrees, memory, session state)
 .claude/
+
+.vercel
+.env*

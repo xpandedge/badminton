@@ -136,10 +136,12 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
       }
 
-      // Any signed-in user may read sessions for squad feeds and join codes.
+      // Any signed-in user may read sessions (squad feeds, join codes, public
+      // board). Writes stay organiser-only — all real mutations go through
+      // admin-SDK server actions, so clients never need create/update here.
       allow read: if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn();
+      allow create: if isCreateSessionGroupOrganiser();
+      allow update: if isSessionGroupOrganiser();
 
       match /players/{playerId} {
         allow read: if isSessionGroupMember() || request.auth.uid == playerId;

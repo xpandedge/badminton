@@ -2,55 +2,37 @@ import { describe, it, expect } from "vitest";
 import { buildRebalanceSummary } from "./rebalance-summary.js";
 
 describe("buildRebalanceSummary", () => {
-  it("describes preserved matches and roster changes", () => {
+  it("describes preserved, cancelled, and regenerated matches plus removals", () => {
     const s = buildRebalanceSummary({
-      completedPreserved: 2, inProgressPreserved: 1,
-      removed: ["Ravi"], addedFromRound: [{ name: "Anita", round: 4 }],
-      minGames: 3, maxGames: 4,
+      completedPreserved: 2, cancelled: 1, regenerated: 1, removed: ["Ravi"],
     });
     expect(s).toContain("2 completed matches preserved");
-    expect(s).toContain("1 current match preserved");
-    expect(s).toContain("Ravi removed from future rounds");
-    expect(s).toContain("Anita added from Round 4");
-    expect(s).toContain("3–4");
+    expect(s).toContain("1 not-yet-started match re-picked");
+    expect(s).toContain("1 new match assigned");
+    expect(s).toContain("Ravi removed from the session");
   });
 
-  it("handles no removals or additions", () => {
-    const s = buildRebalanceSummary({
-      completedPreserved: 0, inProgressPreserved: 0,
-      removed: [], addedFromRound: [],
-      minGames: 2, maxGames: 2,
-    });
-    expect(s).toContain("Future rounds regenerated.");
+  it("handles no removals", () => {
+    const s = buildRebalanceSummary({ completedPreserved: 0, cancelled: 0, regenerated: 0, removed: [] });
     expect(s).toContain("0 completed matches preserved");
-    expect(s).toContain("2–2");
-    expect(s).not.toContain("removed from future rounds");
-    expect(s).not.toContain("added from Round");
+    expect(s).not.toContain("removed from the session");
   });
 
   it("pluralizes 'match' correctly for 0, 1, and 2+ counts", () => {
-    const two = buildRebalanceSummary({ completedPreserved: 2, inProgressPreserved: 2, removed: [], addedFromRound: [], minGames: 1, maxGames: 1 });
+    const two = buildRebalanceSummary({ completedPreserved: 2, cancelled: 2, regenerated: 2, removed: [] });
     expect(two).toContain("2 completed matches preserved");
-    expect(two).toContain("2 current matches preserved");
+    expect(two).toContain("2 not-yet-started matches re-picked");
+    expect(two).toContain("2 new matches assigned");
 
-    const one = buildRebalanceSummary({ completedPreserved: 1, inProgressPreserved: 1, removed: [], addedFromRound: [], minGames: 1, maxGames: 1 });
+    const one = buildRebalanceSummary({ completedPreserved: 1, cancelled: 1, regenerated: 1, removed: [] });
     expect(one).toContain("1 completed match preserved");
-    expect(one).toContain("1 current match preserved");
-
-    const zero = buildRebalanceSummary({ completedPreserved: 0, inProgressPreserved: 0, removed: [], addedFromRound: [], minGames: 1, maxGames: 1 });
-    expect(zero).toContain("0 completed matches preserved");
-    expect(zero).toContain("0 current matches preserved");
+    expect(one).toContain("1 not-yet-started match re-picked");
+    expect(one).toContain("1 new match assigned");
   });
 
-  it("handles multiple removed and added players", () => {
-    const s = buildRebalanceSummary({
-      completedPreserved: 1, inProgressPreserved: 0,
-      removed: ["Ali", "Sam"], addedFromRound: [{ name: "Jo", round: 2 }, { name: "Pat", round: 3 }],
-      minGames: 1, maxGames: 3,
-    });
-    expect(s).toContain("Ali removed from future rounds");
-    expect(s).toContain("Sam removed from future rounds");
-    expect(s).toContain("Jo added from Round 2");
-    expect(s).toContain("Pat added from Round 3");
+  it("handles multiple removed players", () => {
+    const s = buildRebalanceSummary({ completedPreserved: 1, cancelled: 0, regenerated: 0, removed: ["Ali", "Sam"] });
+    expect(s).toContain("Ali removed from the session");
+    expect(s).toContain("Sam removed from the session");
   });
 });

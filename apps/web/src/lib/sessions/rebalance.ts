@@ -19,7 +19,6 @@ export async function rebalanceSession(data: { sessionId: string; trigger?: stri
   );
   if (!result.ok) throw new Error(result.message);
   void logEvent("rebalance_triggered", { sessionId: data.sessionId, trigger: data.trigger });
-  // Return shape expected by live page: { data: { summary, metadata } }
   return { data: result.data };
 }
 
@@ -41,14 +40,14 @@ export async function markPlayerInjured(data: { sessionId: string; sessionPlayer
   return { data: result.data };
 }
 
-export async function swapPlayers(data: { sessionId: string; matchId: string; roundNumber: number; outPlayerId: string; inPlayerId: string }) {
-  const result = await serverSwapPlayers(data.sessionId, data.matchId, data.roundNumber, data.outPlayerId, data.inPlayerId);
+export async function swapPlayers(data: { sessionId: string; matchId: string; outPlayerId: string; inPlayerId: string }) {
+  const result = await serverSwapPlayers(data.sessionId, data.matchId, data.outPlayerId, data.inPlayerId);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }
 
-export async function moveMatch(data: { sessionId: string; matchId: string; roundNumber: number; courtId: string }) {
-  const result = await serverMoveMatch(data.sessionId, data.matchId, data.roundNumber, data.courtId);
+export async function moveMatch(data: { sessionId: string; matchId: string; courtId: string }) {
+  const result = await serverMoveMatch(data.sessionId, data.matchId, data.courtId);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }

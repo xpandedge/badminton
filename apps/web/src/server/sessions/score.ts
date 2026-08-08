@@ -5,10 +5,10 @@ import { canEnterScore, deriveWinner, type ScorePayload, type ScoringMode } from
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { validatePayload, readAutoFillInputs, writeAutoFill } from "./scheduling";
 
 export interface SubmitScoreInput {
   sessionId: string;
-  roundNumber: number;
   matchId: string;
   payload: ScorePayload;
 }
@@ -17,51 +17,39 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
-  const { sessionId, roundNumber, matchId, payload } = input;
-
+  const { sessionId, matchId, payload } = input;
   if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
-  if (typeof roundNumber !== "number" || roundNumber < 1) {
-    return err("INVALID_ARGUMENT", "roundNumber must be a positive integer");
-  }
 
   const db = getAdminDb();
 
   try {
     await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
-      const sessionSnap = await t.get(sessionRef);
-      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
-      const session = sessionSnap.data()!;
+      const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
 
-      // Membership check: any squad member can score (D8)
+      // ── ALL READS FIRST ──
+      const [sessionSnap, matchSnap] = await Promise.all([t.get(sessionRef), t.get(matchRef)]);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+      const match = matchSnap.data()!;
+
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canEnterScore(role)) throw Object.assign(new Error("Must be a squad member to submit scores"), { code: "FORBIDDEN" });
 
-      // F-H5: only score active/paused sessions and non-future rounds
       if (session.status !== "active" && session.status !== "paused") {
         throw Object.assign(new Error("Scores can only be entered while the session is active"), { code: "FAILED_PRECONDITION" });
       }
-      if (roundNumber > (session.currentRoundNumber || 0)) {
-        throw Object.assign(new Error("Cannot score a future round"), { code: "FAILED_PRECONDITION" });
-      }
-
-      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
-      const matchSnap = await t.get(matchRef);
-      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
-      const match = matchSnap.data()!;
-
       if (match.status === "cancelled") {
         throw Object.assign(new Error("Cannot submit score for a cancelled match"), { code: "FAILED_PRECONDITION" });
       }
 
-      // Validate payload against the session's scoring mode
       const mode = session.scoringMode as ScoringMode;
       const validPayload = validatePayload(payload, mode);
       if (!validPayload.ok) throw Object.assign(new Error(validPayload.message), { code: "INVALID_ARGUMENT" });
 
       const winnerTeam = deriveWinner(payload, mode);
-
       const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
       const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
       const allPlayerIds = [...teamAIds, ...teamBIds];
@@ -70,13 +58,16 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
       const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
       const globalRefs = allPlayerIds.map((id) => db.doc(`players/${id}`));
 
+      const isEdit = match.status === "completed";
+      const auto = isEdit ? null : await readAutoFillInputs(t, db, sessionId, matchId);
+
       const [playerDocs, lbDocs, globalDocs] = await Promise.all([
         Promise.all(playerRefs.map((r) => t.get(r))),
         Promise.all(lbRefs.map((r) => t.get(r))),
         Promise.all(globalRefs.map((r) => t.get(r))),
       ]);
 
-      const isEdit = match.status === "completed";
+      // ── THEN ALL WRITES ──
       const priorWinner: "A" | "B" | undefined = match.winnerTeam;
       const priorPayload: ScorePayload | undefined = match.scorePayload;
 
@@ -89,24 +80,21 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         let gStats = globalDocs[i]?.data() ?? {};
 
         if (isEdit && priorPayload && priorWinner) {
-          pStats = applyDelta(pStats, { playerId: pid, isTeamA, winner: priorWinner, payload: priorPayload, mode, sign: -1 });
-          lbStats = applyDelta(lbStats, { playerId: pid, isTeamA, winner: priorWinner, payload: priorPayload, mode, sign: -1 });
-          gStats = applyGlobalDelta(gStats, { isTeamA, winner: priorWinner, payload: priorPayload, mode, sign: -1 });
+          pStats = applyDelta(pStats, { isTeamA, winner: priorWinner, payload: priorPayload, sign: -1 });
+          lbStats = applyDelta(lbStats, { isTeamA, winner: priorWinner, payload: priorPayload, sign: -1 });
+          gStats = applyGlobalDelta(gStats, { isTeamA, winner: priorWinner, payload: priorPayload, sign: -1 });
         }
 
-        pStats = applyDelta(pStats, { playerId: pid, isTeamA, winner: winnerTeam, payload, mode, sign: 1 });
-        lbStats = applyDelta(lbStats, { playerId: pid, isTeamA, winner: winnerTeam, payload, mode, sign: 1 });
-        gStats = applyGlobalDelta(gStats, { isTeamA, winner: winnerTeam, payload, mode, sign: 1 });
+        pStats = applyDelta(pStats, { isTeamA, winner: winnerTeam, payload, sign: 1 });
+        lbStats = applyDelta(lbStats, { isTeamA, winner: winnerTeam, payload, sign: 1 });
+        gStats = applyGlobalDelta(gStats, { isTeamA, winner: winnerTeam, payload, sign: 1 });
 
         t.set(playerRefs[i]!, pStats, { merge: true });
         t.set(lbRefs[i]!, lbStats, { merge: true });
-        // Guests only ever show up on the per-session leaderboard (above) — never
-        // the permanent global one, and their stats must not carry into future sessions.
         const isGuestGlobal = (globalDocs[i]?.data() as any)?.isGuest === true;
         if (globalDocs[i]?.exists && !isGuestGlobal) {
           t.update(globalRefs[i]!, { ...buildGlobalUpdate(gStats), lastPlayedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
         }
-        // If global doc doesn't exist yet (sign-in race), skip — ensureGlobalPlayer handles it
       }
 
       t.update(matchRef, {
@@ -117,11 +105,12 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         completedAt: FieldValue.serverTimestamp(),
       });
 
-      const auditRef = db.collection(`sessions/${sessionId}/auditLogs`).doc();
-      t.set(auditRef, {
+      if (auto) writeAutoFill(t, db, sessionId, sessionRef, auto);
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: isEdit ? "score/changed" : "score/submitted",
-        details: { matchId, roundNumber, winnerTeam },
+        details: { matchId, winnerTeam },
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -138,37 +127,15 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function validatePayload(
-  payload: unknown,
-  mode: ScoringMode,
-): { ok: true } | { ok: false; message: string } {
-  if (!payload || typeof payload !== "object") return { ok: false, message: "payload must be an object" };
-  const p = payload as Record<string, unknown>;
-  if (mode === "points") {
-    if (typeof p.teamAScore !== "number" || typeof p.teamBScore !== "number") {
-      return { ok: false, message: "points mode requires numeric teamAScore and teamBScore" };
-    }
-    if (p.teamAScore === p.teamBScore) return { ok: false, message: "Tied scores are not allowed" };
-    return { ok: true };
-  }
-  if (p.winnerTeam !== "A" && p.winnerTeam !== "B") {
-    return { ok: false, message: "winner_only mode requires winnerTeam of 'A' or 'B'" };
-  }
-  return { ok: true };
-}
-
 interface DeltaArgs {
-  playerId?: string;
   isTeamA: boolean;
   winner: "A" | "B";
   payload: ScorePayload;
-  mode: ScoringMode;
   sign: 1 | -1;
 }
 
 function applyDelta(stats: Record<string, any>, { isTeamA, winner, payload, sign }: DeltaArgs): Record<string, any> {
   const isWinner = winner === (isTeamA ? "A" : "B");
-  // F-C2: typeof check — a legitimate score of 0 must not be dropped
   const rawFor = "teamAScore" in payload ? (isTeamA ? payload.teamAScore : payload.teamBScore) : undefined;
   const rawAgainst = "teamAScore" in payload ? (isTeamA ? payload.teamBScore : payload.teamAScore) : undefined;
   const hasPoints = typeof rawFor === "number" && typeof rawAgainst === "number";
@@ -184,15 +151,7 @@ function applyDelta(stats: Record<string, any>, { isTeamA, winner, payload, sign
   };
 }
 
-interface GlobalDeltaArgs {
-  isTeamA: boolean;
-  winner: "A" | "B";
-  payload: ScorePayload;
-  mode: ScoringMode;
-  sign: 1 | -1;
-}
-
-function applyGlobalDelta(stats: Record<string, any>, { isTeamA, winner, payload, sign }: GlobalDeltaArgs): Record<string, any> {
+function applyGlobalDelta(stats: Record<string, any>, { isTeamA, winner, payload, sign }: DeltaArgs): Record<string, any> {
   const isWinner = winner === (isTeamA ? "A" : "B");
   const rawFor = "teamAScore" in payload ? (isTeamA ? payload.teamAScore : payload.teamBScore) : undefined;
   const rawAgainst = "teamAScore" in payload ? (isTeamA ? payload.teamBScore : payload.teamAScore) : undefined;
@@ -224,17 +183,13 @@ function buildGlobalUpdate(stats: Record<string, any>): Record<string, any> {
 
 export interface CompleteMatchInput {
   sessionId: string;
-  roundNumber: number;
   matchId: string;
 }
 
 /**
- * Completes a match without requiring any score input.
- *
- * Marks the match as `completed` and locked so it is treated correctly by
- * the rolling court queue (future rebalances will preserve it as a locked
- * match). Each player's `gamesPlayed` count is incremented for rotation
- * fairness tracking. No winner, no points — just "game done, next up".
+ * Completes a match without requiring any score input. Marks it completed and
+ * locked, increments each player's gamesPlayed, and — like submitScore — auto-
+ * fills the freed court(s) for whoever's now idle.
  */
 export async function completeMatchWithoutScore(
   input: CompleteMatchInput,
@@ -242,42 +197,31 @@ export async function completeMatchWithoutScore(
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
-  const { sessionId, roundNumber, matchId } = input;
+  const { sessionId, matchId } = input;
   if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
-  if (typeof roundNumber !== "number" || roundNumber < 1) {
-    return err("INVALID_ARGUMENT", "roundNumber must be a positive integer");
-  }
 
   const db = getAdminDb();
 
   try {
     await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
-      const sessionSnap = await t.get(sessionRef);
+      const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
+
+      // ── ALL READS FIRST ──
+      const [sessionSnap, matchSnap] = await Promise.all([t.get(sessionRef), t.get(matchRef)]);
       if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
       const session = sessionSnap.data()!;
+      const match = matchSnap.data()!;
 
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canEnterScore(role)) {
         throw Object.assign(new Error("Must be a squad member to complete matches"), { code: "FORBIDDEN" });
       }
-
       if (session.status !== "active" && session.status !== "paused") {
-        throw Object.assign(
-          new Error("Scores can only be entered while the session is active"),
-          { code: "FAILED_PRECONDITION" },
-        );
+        throw Object.assign(new Error("Scores can only be entered while the session is active"), { code: "FAILED_PRECONDITION" });
       }
-      if (roundNumber > (session.currentRoundNumber || 0)) {
-        throw Object.assign(new Error("Cannot complete a future round match"), { code: "FAILED_PRECONDITION" });
-      }
-
-      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
-      const matchSnap = await t.get(matchRef);
-      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
-      const match = matchSnap.data()!;
-
       if (match.status === "cancelled" || match.status === "completed") {
         throw Object.assign(new Error("Match is already completed or cancelled"), { code: "FAILED_PRECONDITION" });
       }
@@ -285,16 +229,22 @@ export async function completeMatchWithoutScore(
       const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
       const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
       const allPlayerIds = [...teamAIds, ...teamBIds];
+      const playerRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/players/${id}`));
+      const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
 
-      // Increment gamesPlayed for each participant (no wins/losses — score-free)
-      for (const pid of allPlayerIds) {
-        const playerRef = db.doc(`sessions/${sessionId}/players/${pid}`);
-        const lbRef = db.doc(`sessions/${sessionId}/leaderboard/${pid}`);
-        const [pSnap, lbSnap] = await Promise.all([t.get(playerRef), t.get(lbRef)]);
-        const pData = pSnap.data() ?? {};
-        const lbData = lbSnap.data() ?? {};
-        t.set(playerRef, { ...pData, gamesPlayed: (pData.gamesPlayed || 0) + 1 }, { merge: true });
-        t.set(lbRef, { ...lbData, gamesPlayed: (lbData.gamesPlayed || 0) + 1 }, { merge: true });
+      const auto = await readAutoFillInputs(t, db, sessionId, matchId);
+
+      const [playerDocs, lbDocs] = await Promise.all([
+        Promise.all(playerRefs.map((r) => t.get(r))),
+        Promise.all(lbRefs.map((r) => t.get(r))),
+      ]);
+
+      // ── THEN ALL WRITES ──
+      for (let i = 0; i < allPlayerIds.length; i++) {
+        const pData = playerDocs[i]?.data() ?? {};
+        const lbData = lbDocs[i]?.data() ?? {};
+        t.set(playerRefs[i]!, { ...pData, gamesPlayed: (pData.gamesPlayed || 0) + 1 }, { merge: true });
+        t.set(lbRefs[i]!, { ...lbData, gamesPlayed: (lbData.gamesPlayed || 0) + 1 }, { merge: true });
       }
 
       t.update(matchRef, {
@@ -305,10 +255,12 @@ export async function completeMatchWithoutScore(
         winnerTeam: null,
       });
 
+      if (auto) writeAutoFill(t, db, sessionId, sessionRef, auto);
+
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "score/completed_without_score",
-        details: { matchId, roundNumber },
+        details: { matchId },
         createdAt: FieldValue.serverTimestamp(),
       });
     });

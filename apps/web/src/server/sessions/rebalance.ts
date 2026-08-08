@@ -1,32 +1,27 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import {
-  canGenerateSchedule,
-  buildRebalanceSummary,
-  deriveWinner,
-  type ScoringMode,
-} from "@picklebaddies/domain";
-import { generateSchedule as engineGenerateSchedule, type LockedMatch } from "@picklebaddies/match-engine";
+import { canGenerateSchedule, buildRebalanceSummary, deriveWinner, type ScoringMode } from "@picklebaddies/domain";
+import { buildRound, seedStateFromLocked, seededOrder, DEFAULT_SEED, type LockedMatch } from "@picklebaddies/match-engine";
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
-import { mapSessionToEngineInput } from "@/server/lib/mapping";
+import { toEnginePlayers, toEngineCourts, buildMatchDocs, serializeEngineState } from "./scheduling";
 
 type RebalanceTrigger = "manual_rebalance" | "player_added" | "player_removed" | "settings_changed";
 
 export interface RebalanceResult {
   summary: string;
-  metadata: unknown;
 }
 
 /**
- * Rebalance future rounds, preserving locked (completed/in-progress) matches.
- *
- * F-C3: all reads happen inside a single transaction snapshot before any write,
- * so a concurrent score submission cannot cause double-counting.
- * D4: elapsedRounds = completed + in-progress rounds — single source for every
- * delete/write boundary and for the engine (F-H1/F-H2).
+ * Continuous scheduling has at most ONE not-yet-started match per court at any
+ * time (no batch of future rounds to discard). Rebalancing means: cancel every
+ * currently-scheduled (not yet started) match, freeing those courts, then
+ * re-pick matches for all now-idle players against a freshly-rebuilt fairness
+ * state (rebuilt from completed matches only, so a cancelled match's
+ * provisional stat contribution is correctly discarded). Completed matches and
+ * their stats are never touched.
  */
 export async function rebalanceSession(
   sessionId: string,
@@ -42,7 +37,7 @@ export async function rebalanceSession(
 
   try {
     const result = await db.runTransaction(async (t) => {
-      // ─────────────────────── ALL READS FIRST (F-C3) ──────────────────────
+      // ── ALL READS FIRST ──
       const sessionSnap = await t.get(sessionRef);
       if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
       const session = sessionSnap.data()!;
@@ -52,45 +47,26 @@ export async function rebalanceSession(
       if (!canGenerateSchedule(role)) {
         throw Object.assign(new Error("Must be a squad member to rebalance"), { code: "FORBIDDEN" });
       }
-
       if (session.status !== "active" && session.status !== "paused") {
-        throw Object.assign(
-          new Error("Session must be active or paused to rebalance"),
-          { code: "FAILED_PRECONDITION" },
-        );
+        throw Object.assign(new Error("Session must be active or paused to rebalance"), { code: "FAILED_PRECONDITION" });
       }
 
-      const playersSnap = await t.get(db.collection(`sessions/${sessionId}/players`));
+      const [playersSnap, matchesSnap] = await Promise.all([
+        t.get(db.collection(`sessions/${sessionId}/players`)),
+        t.get(db.collection(`sessions/${sessionId}/matches`)),
+      ]);
       const players = playersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      const matches = matchesSnap.docs.map((d) => ({ id: d.id, ref: d.ref, ...(d.data() as any) }));
 
-      const roundsSnap = await t.get(db.collection(`sessions/${sessionId}/rounds`));
-      const rounds = roundsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-
-      const matchesByRound = await Promise.all(
-        roundsSnap.docs.map((rDoc) => t.get(db.collection(`sessions/${sessionId}/rounds/${rDoc.id}/matches`))),
-      );
-      const allMatches = matchesByRound.flatMap((snap) =>
-        snap.docs.map((m) => ({ id: m.id, ref: m.ref, ...(m.data() as any) })),
-      );
-
-      const sitOutsSnap = await t.get(db.collection(`sessions/${sessionId}/sitOuts`));
-
-      // ──────────────────────── COMPUTE (pure) ─────────────────────────────
-      // D4: elapsed = completed + in-progress rounds
-      const elapsedRounds = rounds.filter(
-        (r) => r.status === "completed" || r.status === "in_progress",
-      ).length;
-
-      // Only completed matches feed locked constraints (cancelled ≠ played)
-      const completedMatches = allMatches.filter((m) => m.status === "completed");
-      const inProgressCount = allMatches.filter((m) => m.status === "in_progress").length;
+      // ── COMPUTE ──
+      const completedMatches = matches.filter((m) => m.status === "completed");
+      const scheduledMatches = matches.filter((m) => m.status === "scheduled");
 
       const lockedFull: LockedMatchFull[] = completedMatches.map((m) => {
         const teamAIds = (m.teamAIds || m.teamA.map((p: any) => p.playerId)) as [string, string];
         const teamBIds = (m.teamBIds || m.teamB.map((p: any) => p.playerId)) as [string, string];
         return {
-          matchId: m.id, status: "completed" as const,
-          roundNumber: m.roundNumber, courtId: m.courtId,
+          matchId: m.id, roundNumber: m.roundNumber, courtId: m.courtId,
           teamA: teamAIds, teamB: teamBIds, teamAIds, teamBIds,
           scorePayload: m.scorePayload, winnerTeam: m.winnerTeam,
         };
@@ -101,105 +77,66 @@ export async function rebalanceSession(
 
       const recomputedStats = recomputeStatsFromLocked(lockedFull, session.scoringMode as ScoringMode);
 
-      const sitOutCounts = new Map<string, number>();
-      for (const sDoc of sitOutsSnap.docs) {
-        const d = sDoc.data() as any;
-        if (d.roundNumber <= elapsedRounds) {
-          sitOutCounts.set(d.playerId, (sitOutCounts.get(d.playerId) ?? 0) + 1);
-        }
-      }
+      const enginePlayers = toEnginePlayers(players);
+      const engineCourts = toEngineCourts(session.courts || []);
+      // Rebuild fairness state from completed matches only — discards any
+      // provisional contribution the about-to-be-cancelled matches made.
+      const state = seedStateFromLocked(enginePlayers, lockedMatches);
+      const order = seededOrder(enginePlayers.map((p) => p.playerId), DEFAULT_SEED);
+      const cycle = session.nextCycleNumber || 2;
 
-      const engineInput = mapSessionToEngineInput(session, players, rounds, [], "rebalance");
-      engineInput.lockedMatches = lockedMatches;
-      engineInput.elapsedRounds = elapsedRounds;
+      // Every court is idle after cancellation (no in-progress state exists —
+      // matches go straight scheduled -> completed/cancelled in this app).
+      const { matches: newMatches, sitOuts: newSitOuts } = buildRound(state, enginePlayers, engineCourts, cycle, order);
 
-      const engineOutput = engineGenerateSchedule(engineInput);
+      const removedPlayers = players.filter((p) => p.status === "left" || p.status === "removed" || p.status === "no_show");
 
-      const removedPlayers = players.filter(
-        (p) => p.status === "left" || p.status === "removed" || p.status === "no_show",
-      );
-      const lateJoiners = players.filter((p) => p.availableFromRound && p.availableFromRound > 1);
-
-      // ─────────────────────────────── WRITES ──────────────────────────────
-      // 1. Reconcile all player stats from locked snapshot (corrects drift)
+      // ── WRITES ──
       const zero = { gamesPlayed: 0, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, pointDifference: 0 };
       for (const p of players) {
         const base = recomputedStats.get(p.id) ?? { ...zero, sitOutCount: 0 };
-        const sitOutCount = sitOutCounts.get(p.id) ?? 0;
-        const playerStats = { ...base, sitOutCount };
-        t.set(db.doc(`sessions/${sessionId}/players/${p.id}`), playerStats, { merge: true });
-        t.set(db.doc(`sessions/${sessionId}/leaderboard/${p.id}`), { ...playerStats, displayName: p.displayName }, { merge: true });
+        t.set(db.doc(`sessions/${sessionId}/players/${p.id}`), base, { merge: true });
+        t.set(db.doc(`sessions/${sessionId}/leaderboard/${p.id}`), { ...base, displayName: p.displayName }, { merge: true });
       }
 
-      // 2. Delete future scheduled rounds, their matches, and future sit-outs
-      for (let i = 0; i < roundsSnap.docs.length; i++) {
-        const rDoc = roundsSnap.docs[i]!;
-        const roundData = rounds[i]!;
-        if (roundData.roundNumber <= elapsedRounds || roundData.status !== "scheduled") continue;
-        for (const mDoc of matchesByRound[i]!.docs) {
-          if ((mDoc.data() as any).status === "scheduled") t.delete(mDoc.ref);
-        }
-        t.delete(rDoc.ref);
-      }
-      for (const sDoc of sitOutsSnap.docs) {
-        if ((sDoc.data() as any).roundNumber > elapsedRounds) t.delete(sDoc.ref);
+      for (const m of scheduledMatches) {
+        t.update(m.ref, { status: "cancelled", isLocked: true });
       }
 
-      // 3. Write regenerated future rounds/matches/sit-outs
-      const displayName = (pid: string) => players.find((p) => p.id === pid)?.displayName ?? "Unknown";
-      const roundRefs = new Map<number, FirebaseFirestore.DocumentReference>();
-      for (const match of engineOutput.matches) {
-        if (match.roundNumber <= elapsedRounds) continue;
-        let rRef = roundRefs.get(match.roundNumber);
-        if (!rRef) {
-          rRef = db.doc(`sessions/${sessionId}/rounds/round_${match.roundNumber}`);
-          roundRefs.set(match.roundNumber, rRef);
-          t.set(rRef, { roundNumber: match.roundNumber, status: "scheduled" });
-        }
-        const mRef = rRef.collection("matches").doc();
-        t.set(mRef, {
-          roundNumber: match.roundNumber,
-          courtId: match.courtId,
-          matchNumber: match.matchNumber,
-          teamA: match.teamA.map((pid) => ({ playerId: pid, displayName: displayName(pid) })),
-          teamB: match.teamB.map((pid) => ({ playerId: pid, displayName: displayName(pid) })),
-          teamAIds: match.teamA,
-          teamBIds: match.teamB,
-          status: "scheduled",
-          isLocked: false,
-          sessionId,
-        });
+      const nameById = new Map(players.map((p: any) => [p.id, p.displayName ?? "Player"]));
+      const courtNameById = new Map(engineCourts.map((c) => [c.courtId, c.name]));
+      for (const doc of buildMatchDocs(sessionId, nameById, newMatches, courtNameById)) {
+        t.set(db.collection(`sessions/${sessionId}/matches`).doc(), doc);
       }
-      for (const sitOut of engineOutput.sitOuts) {
-        if (sitOut.roundNumber <= elapsedRounds) continue;
+      for (const sitOut of newSitOuts) {
         t.set(db.collection(`sessions/${sessionId}/sitOuts`).doc(), sitOut);
       }
+      t.set(db.doc(`sessions/${sessionId}/engine/state`), serializeEngineState(state));
+      t.update(sessionRef, { nextCycleNumber: cycle + 1 });
 
-      // 4. Generation run + audit
       t.set(db.collection(`sessions/${sessionId}/generationRuns`).doc(), {
         mode: "rebalance",
         trigger,
-        metadata: engineOutput.metadata,
+        matchCount: newMatches.length,
+        sitOutCount: newSitOuts.length,
         createdAt: FieldValue.serverTimestamp(),
         createdBy: user.uid,
       });
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "generation/rebalanced",
-        details: { trigger, metadata: engineOutput.metadata },
+        details: { trigger, matchCount: newMatches.length },
         createdAt: FieldValue.serverTimestamp(),
       });
 
       const summary = buildRebalanceSummary({
         completedPreserved: completedMatches.length,
-        inProgressPreserved: inProgressCount,
+        cancelled: scheduledMatches.length,
+        regenerated: newMatches.length,
         removed: removedPlayers.map((p) => p.displayName),
-        addedFromRound: lateJoiners.map((p) => ({ name: p.displayName, round: p.availableFromRound })),
-        minGames: (engineOutput.metadata as any).minGamesPerPlayer,
-        maxGames: (engineOutput.metadata as any).maxGamesPerPlayer,
       });
 
-      return { summary, metadata: engineOutput.metadata };
+      return { summary };
     });
 
     return ok(result);
@@ -215,7 +152,6 @@ export async function rebalanceSession(
 
 interface LockedMatchFull extends LockedMatch {
   matchId: string;
-  status: "completed" | "in_progress";
   scorePayload?: any;
   winnerTeam?: "A" | "B";
   teamAIds: [string, string];
@@ -241,8 +177,6 @@ function recomputeStatsFromLocked(
     stats.get(pid) ?? { gamesPlayed: 0, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, pointDifference: 0, sitOutCount: 0 };
 
   for (const m of lockedFull) {
-    if (m.status !== "completed") continue;
-
     let winnerTeam: "A" | "B" | null = null;
     if (m.scorePayload) {
       try { winnerTeam = deriveWinner(m.scorePayload, scoringMode); } catch { winnerTeam = null; }

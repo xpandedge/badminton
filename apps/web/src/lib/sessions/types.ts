@@ -21,7 +21,9 @@ export interface Session {
   courtCount: number;                // derived: count of isActive courts
   scoringMode: ScoringMode;          // DELTA_SPEC D1
   createdBy: string;
-  currentRoundNumber: number;
+  /** Continuous scheduling: courts advance independently, no synchronized
+   *  round pointer. Purely a labeling counter for the next assigned match. */
+  nextCycleNumber?: number;
   joinCode: string;
   joinEnabled: boolean;
   scoreCode: string;

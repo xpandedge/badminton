@@ -145,14 +145,17 @@ service cloud.firestore {
         allow create: if false; // Server tier only (D6)
       }
 
-      match /rounds/{roundId} {
+      // Continuous per-court scheduling: matches live flat, not nested under a
+      // round doc — each court has at most one `scheduled` match at a time.
+      match /matches/{matchId} {
         allow read: if isSessionGroupMember() || isSessionPlayer();
         allow write: if false; // Server tier only (D8)
+      }
 
-        match /matches/{matchId} {
-          allow read: if isSessionGroupMember() || isSessionPlayer();
-          allow write: if false; // Server tier only (D8)
-        }
+      // Persisted fairness bookkeeping (EngineState) — never client-readable,
+      // updated incrementally by server actions as courts free up.
+      match /engine/{docId} {
+        allow read, write: if false;
       }
 
       match /leaderboard/{playerId} {

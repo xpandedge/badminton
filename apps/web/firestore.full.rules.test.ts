@@ -46,9 +46,9 @@ beforeEach(async () => {
     await setDoc(doc(db, "sessions/s1"), { groupId: "g1", status: "active" });
     await setDoc(doc(db, "sessions/s1/players/p1"), { displayName: "P1", status: "active" });
 
-    // Round + match
-    await setDoc(doc(db, "sessions/s1/rounds/round_1"), { roundNumber: 1, status: "in_progress" });
-    await setDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1"), { matchNumber: 1, status: "scheduled" });
+    // Match (flat collection — continuous per-court scheduling, no round doc)
+    await setDoc(doc(db, "sessions/s1/matches/m1"), { roundNumber: 1, matchNumber: 1, courtId: "c1", status: "scheduled" });
+    await setDoc(doc(db, "sessions/s1/engine/state"), { gamesPlayed: {} });
 
     // Leaderboard + ancillary
     await setDoc(doc(db, "sessions/s1/leaderboard/p1"), { wins: 0 });
@@ -250,38 +250,38 @@ describe("§19.6 Session Players — function-write-only (D6)", () => {
   });
 });
 
-// ── §19.7 Rounds + Matches ───────────────────────────────────────────────────
+// ── §19.7 Matches + Engine state (continuous per-court scheduling) ───────────
 
-describe("§19.7 Rounds + Matches — function-write-only", () => {
-  it("group member can read rounds and matches", async () => {
+describe("§19.7 Matches — function-write-only", () => {
+  it("group member can read matches", async () => {
     const db = testEnv.authenticatedContext("member1").firestore();
-    await assertSucceeds(getDoc(doc(db, "sessions/s1/rounds/round_1")));
-    await assertSucceeds(getDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1")));
+    await assertSucceeds(getDoc(doc(db, "sessions/s1/matches/m1")));
   });
 
   it("session player can read matches", async () => {
     const db = testEnv.authenticatedContext("p1").firestore();
-    await assertSucceeds(getDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1")));
-  });
-
-  it("organiser cannot write rounds directly", async () => {
-    const db = testEnv.authenticatedContext("organiser1").firestore();
-    await assertFails(setDoc(doc(db, "sessions/s1/rounds/round_1"), { status: "completed" }));
+    await assertSucceeds(getDoc(doc(db, "sessions/s1/matches/m1")));
   });
 
   it("organiser cannot write matches directly", async () => {
     const db = testEnv.authenticatedContext("organiser1").firestore();
-    await assertFails(setDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1"), { status: "completed" }));
+    await assertFails(setDoc(doc(db, "sessions/s1/matches/m1"), { status: "completed" }));
   });
 
   it("player cannot write matches", async () => {
     const db = testEnv.authenticatedContext("p1").firestore();
-    await assertFails(setDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1"), { status: "hacked" }));
+    await assertFails(setDoc(doc(db, "sessions/s1/matches/m1"), { status: "hacked" }));
   });
 
   it("non-participant cannot read matches", async () => {
     const db = testEnv.authenticatedContext("outsider").firestore();
-    await assertFails(getDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1")));
+    await assertFails(getDoc(doc(db, "sessions/s1/matches/m1")));
+  });
+
+  it("nobody can read or write the persisted fairness state", async () => {
+    const db = testEnv.authenticatedContext("organiser1").firestore();
+    await assertFails(getDoc(doc(db, "sessions/s1/engine/state")));
+    await assertFails(setDoc(doc(db, "sessions/s1/engine/state"), { gamesPlayed: {} }));
   });
 });
 

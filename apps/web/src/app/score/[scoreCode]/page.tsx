@@ -92,7 +92,7 @@ export default function ScoreLinkPage({ params }: { params: Promise<{ scoreCode:
         <div aria-hidden="true" style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(198,241,53,0.05) 0 1px, transparent 1px 18px)", pointerEvents: "none" }} />
         <div style={{ position: "relative" }}>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-            {titleCase(data.sport)} · Round {data.currentRoundNumber}
+            {titleCase(data.sport)}
           </span>
           <h1 style={{ fontFamily: "var(--font-display)", fontSize: "1.5rem", fontWeight: 900, color: "var(--n-50)", textTransform: "uppercase", letterSpacing: "-0.025em", marginTop: "0.25rem" }}>
             {data.sessionName}

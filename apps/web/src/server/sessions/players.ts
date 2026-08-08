@@ -57,7 +57,6 @@ export async function addGroupMemberToSession(
 
       const displayName = ((groupPlayer.displayName as string | undefined) ?? "").trim() || "Player";
       const skillLevel = (groupPlayer.skillLevel as string | undefined) ?? "unknown";
-      const availableFromRound = session.status === "draft" ? 1 : (session.currentRoundNumber || 1) + 1;
 
       t.set(sessionPlayerRef, {
         playerId: targetPlayerId,
@@ -66,7 +65,6 @@ export async function addGroupMemberToSession(
         status: "active",
         participantType: "registered_user",
         joinedAt: FieldValue.serverTimestamp(),
-        availableFromRound,
         gamesPlayed: 0,
         wins: 0,
         losses: 0,
@@ -167,7 +165,7 @@ export async function addLatePlayer(
   playerId: string,
   displayName: string,
   skillLevel?: string,
-): Promise<ActionResult<{ availableFromRound: number; rebalanceRecommended: boolean }>> {
+): Promise<ActionResult<{ added: true }>> {
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
@@ -205,9 +203,8 @@ export async function addLatePlayer(
         throw Object.assign(new Error("Player is already in this session"), { code: "ALREADY_EXISTS" });
       }
 
-      const currentRound = session.currentRoundNumber || 1;
-      const availableFromRound = currentRound + 1;
-
+      // No round-gating needed: they simply join the idle pool the next time
+      // any court frees up (continuous scheduling, see server/sessions/score.ts).
       t.set(playerRef, {
         playerId,
         displayName,
@@ -215,7 +212,6 @@ export async function addLatePlayer(
         status: "active",
         participantType: "registered_user",
         joinedAt: FieldValue.serverTimestamp(),
-        availableFromRound,
         gamesPlayed: 0,
         wins: 0,
         losses: 0,
@@ -238,11 +234,11 @@ export async function addLatePlayer(
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "player/added_late",
-        details: { playerId, displayName, availableFromRound },
+        details: { playerId, displayName },
         createdAt: FieldValue.serverTimestamp(),
       });
 
-      return { availableFromRound, rebalanceRecommended: true };
+      return { added: true as const };
     });
 
     return ok(result);
@@ -326,7 +322,6 @@ export async function markPlayerInjured(
 export async function swapPlayers(
   sessionId: string,
   matchId: string,
-  roundNumber: number,
   outPlayerId: string,
   inPlayerId: string,
 ): Promise<ActionResult<void>> {
@@ -352,13 +347,13 @@ export async function swapPlayers(
         throw Object.assign(new Error("Must be a squad member to swap players"), { code: "FORBIDDEN" });
       }
 
-      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
+      const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
       const matchSnap = await t.get(matchRef);
       if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
       const match = matchSnap.data()!;
 
       if (match.status !== "scheduled" || match.isLocked) {
-        throw Object.assign(new Error("Can only swap players in future scheduled matches"), { code: "FAILED_PRECONDITION" });
+        throw Object.assign(new Error("Can only swap players in the current, not-yet-started match on a court"), { code: "FAILED_PRECONDITION" });
       }
 
       const inPlayerRef = db.doc(`sessions/${sessionId}/players/${inPlayerId}`);
@@ -395,7 +390,7 @@ export async function swapPlayers(
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "match/updated",
-        details: { matchId, roundNumber, outPlayerId, inPlayerId, action: "swap" },
+        details: { matchId, outPlayerId, inPlayerId, action: "swap" },
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -410,11 +405,10 @@ export async function swapPlayers(
   }
 }
 
-/** PRD §12.10: reassign a future match to a different court. */
+/** PRD §12.10: reassign the current, not-yet-started match on a court to a different court. */
 export async function moveMatch(
   sessionId: string,
   matchId: string,
-  roundNumber: number,
   courtId: string,
 ): Promise<ActionResult<void>> {
   const user = await requireSession().catch(() => null);
@@ -440,13 +434,19 @@ export async function moveMatch(
         throw Object.assign(new Error("Target court not found or inactive"), { code: "FAILED_PRECONDITION" });
       }
 
-      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
+      const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
+      const targetOccupiedSnap = await t.get(
+        db.collection(`sessions/${sessionId}/matches`).where("status", "==", "scheduled").where("courtId", "==", courtId),
+      );
       const matchSnap = await t.get(matchRef);
       if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
       const match = matchSnap.data()!;
 
       if (match.status !== "scheduled" || match.isLocked) {
-        throw Object.assign(new Error("Can only move future scheduled matches"), { code: "FAILED_PRECONDITION" });
+        throw Object.assign(new Error("Can only move the current, not-yet-started match on a court"), { code: "FAILED_PRECONDITION" });
+      }
+      if (!targetOccupiedSnap.empty) {
+        throw Object.assign(new Error("Target court already has a scheduled match"), { code: "FAILED_PRECONDITION" });
       }
 
       t.update(matchRef, { courtId, courtName: court.name });
@@ -454,7 +454,7 @@ export async function moveMatch(
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "match/updated",
-        details: { matchId, roundNumber, courtId, action: "move" },
+        details: { matchId, courtId, action: "move" },
         createdAt: FieldValue.serverTimestamp(),
       });
     });

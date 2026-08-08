@@ -4,7 +4,6 @@ import { FieldValue } from "firebase-admin/firestore";
 import {
   generateJoinCode,
   canCreateSession,
-  canAdvanceRound,
   getSportConfig,
   type Sport,
   type ScoringMode,
@@ -97,7 +96,6 @@ export async function createSession(
     courtCount: sessionCourts.length,
     scoringMode,
     createdBy: session.uid,
-    currentRoundNumber: 0,
     joinCode,
     joinEnabled: true,
     scoreCode,
@@ -153,7 +151,6 @@ export async function updateSessionStatus(
   try {
     await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
-      const round1Ref = db.doc(`sessions/${sessionId}/rounds/round_1`);
 
       const sessionSnap = await t.get(sessionRef);
       if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
@@ -162,10 +159,12 @@ export async function updateSessionStatus(
       const memberSnap = await t.get(db.doc(`groups/${data.groupId}/members/${session.uid}`));
       if (!memberSnap.exists) throw Object.assign(new Error("Not a squad member"), { code: "FORBIDDEN" });
 
-      // "active" is reachable from a fresh session (real start, needs round_1
-      // generated first) or from "paused" (resume, no such gate).
+      // "active" is reachable from a fresh session (real start, needs a
+      // generated schedule first) or from "paused" (resume, no such gate).
       const isStart = targetingActive && data.status !== "paused";
-      const round1Snap = isStart ? await t.get(round1Ref) : null;
+      const firstMatchSnap = isStart
+        ? await t.get(db.collection(`sessions/${sessionId}/matches`).limit(1))
+        : null;
 
       if (!transition.from.includes(data.status)) {
         throw Object.assign(
@@ -173,7 +172,7 @@ export async function updateSessionStatus(
           { code: "FAILED_PRECONDITION" },
         );
       }
-      if (isStart && !round1Snap!.exists) {
+      if (isStart && firstMatchSnap!.empty) {
         throw Object.assign(
           new Error("Generate a schedule before starting the session"),
           { code: "FAILED_PRECONDITION" },
@@ -182,12 +181,8 @@ export async function updateSessionStatus(
 
       t.update(sessionRef, {
         status: statusTo,
-        ...(isStart ? { currentRoundNumber: 1 } : {}),
         updatedAt: FieldValue.serverTimestamp(),
       });
-      if (isStart) {
-        t.update(round1Ref, { status: "in_progress" });
-      }
 
       const auditAction = targetingActive && !isStart ? "session_resumed" : transition.action;
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
@@ -204,84 +199,6 @@ export async function updateSessionStatus(
   }
 
   return ok(undefined);
-}
-
-export interface AdvanceRoundResult {
-  success: true;
-  nextRound?: number;
-  needsConfirmation?: boolean;
-  pendingCount?: number;
-}
-
-export async function advanceRound(
-  sessionId: string,
-  force = false,
-): Promise<ActionResult<AdvanceRoundResult>> {
-  const session = await requireSession().catch(() => null);
-  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
-
-  const db = getAdminDb();
-
-  try {
-    const result = await db.runTransaction(async (t) => {
-      const sessionRef = db.doc(`sessions/${sessionId}`);
-      const sessionSnap = await t.get(sessionRef);
-      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
-      const data = sessionSnap.data()!;
-
-      const memberSnap = await t.get(db.doc(`groups/${data.groupId}/members/${session.uid}`));
-      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
-      if (!canAdvanceRound(role)) {
-        throw Object.assign(new Error("Must be a squad member to advance the round"), { code: "FORBIDDEN" });
-      }
-
-      if (data.status !== "active") {
-        throw Object.assign(new Error("Session must be active to advance round"), { code: "FAILED_PRECONDITION" });
-      }
-
-      const currentRound = data.currentRoundNumber || 1;
-      const currentRoundRef = db.doc(`sessions/${sessionId}/rounds/round_${currentRound}`);
-      const nextRound = currentRound + 1;
-      const nextRoundRef = db.doc(`sessions/${sessionId}/rounds/round_${nextRound}`);
-
-      const matchesSnap = await t.get(db.collection(`sessions/${sessionId}/rounds/round_${currentRound}/matches`));
-      const nextRoundSnap = await t.get(nextRoundRef);
-
-      const pendingMatches = matchesSnap.docs.filter((d) => {
-        const status = d.data().status;
-        return status === "scheduled" || status === "in_progress";
-      });
-
-      if (pendingMatches.length > 0 && !force) {
-        return { success: true as const, needsConfirmation: true, pendingCount: pendingMatches.length };
-      }
-
-      for (const matchDoc of pendingMatches) {
-        t.update(matchDoc.ref, { status: "cancelled", isLocked: true });
-      }
-      t.update(currentRoundRef, { status: "completed" });
-      if (nextRoundSnap.exists) {
-        t.update(nextRoundRef, { status: "in_progress" });
-      }
-      t.update(sessionRef, { currentRoundNumber: nextRound });
-
-      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
-        actorUid: session.uid,
-        action: "round_advanced",
-        details: { fromRound: currentRound, toRound: nextRound, forced: !!force },
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      return { success: true as const, nextRound };
-    });
-
-    return ok(result);
-  } catch (e: any) {
-    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
-    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
-    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
-    throw e;
-  }
 }
 
 export interface SessionSummaryData {

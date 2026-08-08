@@ -1,22 +1,20 @@
 export interface RebalanceSummaryInput {
   completedPreserved: number;
-  inProgressPreserved: number;
+  /** Not-yet-started matches cancelled and re-picked against the current idle pool. */
+  cancelled: number;
+  /** New matches assigned to freed courts as a result of the rebalance. */
+  regenerated: number;
   removed: string[];
-  addedFromRound: Array<{ name: string; round: number }>;
-  minGames: number;
-  maxGames: number;
 }
 
 const matchWord = (n: number): string => (n === 1 ? "match" : "matches");
 
 export function buildRebalanceSummary(i: RebalanceSummaryInput): string {
   const parts = [
-    "Future rounds regenerated.",
     `${i.completedPreserved} completed ${matchWord(i.completedPreserved)} preserved.`,
-    `${i.inProgressPreserved} current ${matchWord(i.inProgressPreserved)} preserved.`,
+    `${i.cancelled} not-yet-started ${matchWord(i.cancelled)} re-picked.`,
+    `${i.regenerated} new ${matchWord(i.regenerated)} assigned.`,
   ];
-  for (const r of i.removed) parts.push(`${r} removed from future rounds.`);
-  for (const a of i.addedFromRound) parts.push(`${a.name} added from Round ${a.round}.`);
-  parts.push(`Expected games per active player: ${i.minGames}–${i.maxGames}.`);
+  for (const r of i.removed) parts.push(`${r} removed from the session.`);
   return parts.join(" ");
 }

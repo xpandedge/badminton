@@ -42,7 +42,7 @@ describe("Live Session Rules (PRD §19.10, D3)", () => {
     const p1Context = testEnv.authenticatedContext("p1");
     const db = p1Context.firestore();
 
-    await assertSucceeds(getDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1")));
+    await assertSucceeds(getDoc(doc(db, "sessions/s1/matches/m1")));
     await assertSucceeds(getDoc(doc(db, "sessions/s1/leaderboard/p1")));
   });
 
@@ -50,14 +50,14 @@ describe("Live Session Rules (PRD §19.10, D3)", () => {
     const randomContext = testEnv.authenticatedContext("random");
     const db = randomContext.firestore();
 
-    await assertFails(getDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1")));
+    await assertFails(getDoc(doc(db, "sessions/s1/matches/m1")));
   });
 
   it("denies participants from writing to matches or leaderboard", async () => {
     const p1Context = testEnv.authenticatedContext("p1");
     const db = p1Context.firestore();
 
-    await assertFails(setDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1"), { test: 1 }));
+    await assertFails(setDoc(doc(db, "sessions/s1/matches/m1"), { test: 1 }));
     await assertFails(setDoc(doc(db, "sessions/s1/leaderboard/p1"), { wins: 1 }));
   });
 
@@ -65,6 +65,6 @@ describe("Live Session Rules (PRD §19.10, D3)", () => {
     const orgContext = testEnv.authenticatedContext("organiser1");
     const db = orgContext.firestore();
 
-    await assertFails(setDoc(doc(db, "sessions/s1/rounds/round_1/matches/m1"), { test: 1 }));
+    await assertFails(setDoc(doc(db, "sessions/s1/matches/m1"), { test: 1 }));
   });
 });

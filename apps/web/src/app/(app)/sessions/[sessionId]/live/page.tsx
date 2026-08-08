@@ -2,13 +2,13 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, advanceRound, watchRounds, watchMatches, watchLeaderboard } from "@/lib/sessions/live";
-import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, moveMatch, disableCourt, watchGenerationRuns, markPlayerInjured } from "@/lib/sessions/rebalance";
+import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchEngineState } from "@/lib/sessions/live";
+import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, moveMatch, disableCourt, markPlayerInjured } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
-import { canAdvanceRound, canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
+import { canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore, finishGameWithoutScore } from "@/lib/sessions/scoring";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
@@ -34,29 +34,23 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const { sessionId } = use(params);
 
   const [session, setSession] = useState<Session | null>(null);
-  const [rounds, setRounds] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [players, setPlayers] = useState<(SessionPlayer & { id: string })[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // M6 UI state
   const [rebalanceSummary, setRebalanceSummary] = useState<string | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [selectedGroupPlayerId, setSelectedGroupPlayerId] = useState("");
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
 
-  // M5 swap/move controls keyed by match id.
   const [swapSelections, setSwapSelections] = useState<Record<string, string>>({});
   const [moveSelections, setMoveSelections] = useState<Record<string, string>>({});
-  const [latestFairnessScore, setLatestFairnessScore] = useState<number | null>(null);
+  const [engineState, setEngineState] = useState<any | null>(null);
 
   const leaderboardLogged = useRef(false);
   const { user } = useAuth();
 
-  // Firestore reads require an authenticated user; gate watchers on `user` so they
-  // don't attach before auth restores (a snapshot listener that errors with
-  // permission-denied is terminal, and would leave the console stuck "Loading").
   useEffect(() => {
     if (!sessionId || !user) return;
     return watchSession(sessionId, (s) => setSession(s));
@@ -73,13 +67,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   useEffect(() => {
     if (!sessionId || !user) return;
-    return watchRounds(sessionId, setRounds);
+    return watchMatches(sessionId, setMatches);
   }, [sessionId, user]);
-
-  useEffect(() => {
-    if (!session?.currentRoundNumber || !sessionId) return;
-    return watchMatches(sessionId, session.currentRoundNumber, setMatches);
-  }, [sessionId, session?.currentRoundNumber]);
 
   useEffect(() => {
     if (!sessionId || !session?.scoringMode) return;
@@ -88,14 +77,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   useEffect(() => {
     if (!sessionId || !user) return;
-    return watchGenerationRuns(sessionId, (runs) => {
-      if (runs.length > 0 && runs[0]?.metadata) {
-        setLatestFairnessScore((runs[0].metadata as any).fairnessScore ?? null);
-      }
-    });
+    return watchEngineState(sessionId, setEngineState);
   }, [sessionId, user]);
 
-  // Load group players for the late-player picker (only after session.groupId is known).
   useEffect(() => {
     if (!session?.groupId) return;
     return watchGroupPlayers(
@@ -105,7 +89,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     );
   }, [session?.groupId]);
 
-  // Fire leaderboard_viewed once when leaderboard data first renders.
   useEffect(() => {
     if (!leaderboardLogged.current && leaderboard.length > 0) {
       leaderboardLogged.current = true;
@@ -138,7 +121,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const canScore = canEnterScore(role);
   const canControlSession = canCreateSession(role);
   const canGenerate = canGenerateSchedule(role);
-  const canAdvance = canAdvanceRound(role);
 
   const handleGenerate = async () => {
     setActionError(null);
@@ -150,19 +132,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const handleStart = async () => {
     setActionError(null);
     try { await startSession({ sessionId }); } catch (e: any) { setActionError(e.message); }
-  };
-
-  const handleAdvance = async () => {
-    setActionError(null);
-    try {
-      const res = await advanceRound({ sessionId });
-      const data = res.data as any;
-      if (data?.needsConfirmation) {
-        if (confirm(`There are ${data.pendingCount} pending matches. Force advance and cancel them?`)) {
-          await advanceRound({ sessionId, force: true });
-        }
-      }
-    } catch (e: any) { setActionError(e.message); }
   };
 
   const handleRebalance = async (trigger?: string) => {
@@ -181,7 +150,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       const res = await updatePlayerStatus({ sessionId, sessionPlayerId, status });
       const data = res.data;
       if (data.rebalanceRecommended) {
-        if (confirm("Player status changed. Rebalance future rounds?")) {
+        if (confirm("Player status changed. Re-pick current matches for the new roster?")) {
           await handleRebalance(status === "left" || status === "removed" || status === "no_show" ? "player_removed" : "settings_changed");
         }
       }
@@ -203,7 +172,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const handleFinishGame = async (matchId: string) => {
     setActionError(null);
     try {
-      await finishGameWithoutScore(sessionId, session.currentRoundNumber, matchId);
+      await finishGameWithoutScore(sessionId, matchId);
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -212,14 +181,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     if (!picked) return;
     setActionError(null);
     try {
-      const res = await addLatePlayer({ sessionId, playerId: picked.id, displayName: picked.displayName });
-      const data = res.data;
+      await addLatePlayer({ sessionId, playerId: picked.id, displayName: picked.displayName });
       setSelectedGroupPlayerId("");
-      if (data.rebalanceRecommended) {
-        if (confirm(`${picked.displayName} added from Round ${data.availableFromRound}. Rebalance future rounds now?`)) {
-          await handleRebalance("player_added");
-        }
-      }
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -229,19 +192,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     try {
       const res = await disableCourt({ sessionId, courtId });
       if ((res.data as any).rebalanceRecommended) {
-        if (confirm("Court disabled. Rebalance future rounds to redistribute matches?")) {
+        if (confirm("Court disabled. Re-pick current matches to redistribute?")) {
           await handleRebalance("settings_changed");
         }
       }
     } catch (e: any) { setActionError(e.message); }
   };
 
-  const handleSwapPlayer = async (matchId: string, roundNumber: number, outPlayerId: string) => {
+  const handleSwapPlayer = async (matchId: string, outPlayerId: string) => {
     const inPlayerId = swapSelections[`${matchId}:${outPlayerId}`];
     if (!inPlayerId) return;
     setActionError(null);
     try {
-      await swapPlayers({ sessionId, matchId, roundNumber, outPlayerId, inPlayerId });
+      await swapPlayers({ sessionId, matchId, outPlayerId, inPlayerId });
       setSwapSelections((prev) => {
         const next = { ...prev };
         delete next[`${matchId}:${outPlayerId}`];
@@ -250,12 +213,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     } catch (e: any) { setActionError(e.message); }
   };
 
-  const handleMoveMatch = async (matchId: string, roundNumber: number) => {
+  const handleMoveMatch = async (matchId: string) => {
     const courtId = moveSelections[matchId];
     if (!courtId) return;
     setActionError(null);
     try {
-      await moveMatch({ sessionId, matchId, roundNumber, courtId });
+      await moveMatch({ sessionId, matchId, courtId });
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -266,14 +229,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     const teamAScore = parseInt(formData.get("teamA") as string, 10);
     const teamBScore = parseInt(formData.get("teamB") as string, 10);
     try {
-      await enterScore(sessionId, session.currentRoundNumber, matchId, { teamAScore, teamBScore });
+      await enterScore(sessionId, matchId, { teamAScore, teamBScore });
     } catch (err: any) { setActionError(err.message); }
   };
 
   const submitScoreWinnerOnly = async (matchId: string, winnerTeam: "A" | "B") => {
     setActionError(null);
     try {
-      await enterScore(sessionId, session.currentRoundNumber, matchId, { winnerTeam });
+      await enterScore(sessionId, matchId, { winnerTeam });
     } catch (err: any) { setActionError(err.message); }
   };
 
@@ -282,7 +245,18 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const activePlayers = players.filter((p) => p.status === "active" || p.status === "checked_in");
   const otherPlayers = players.filter((p) => p.status !== "active" && p.status !== "checked_in");
+
+  const scheduledMatches = matches.filter((m) => m.status === "scheduled");
+  const historyMatches = matches.filter((m) => m.status !== "scheduled").sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0));
+  const scheduledByCourtId = new Map(scheduledMatches.map((m) => [m.courtId, m]));
   const lockedMatches = matches.filter((match) => match.status === "completed" || match.status === "cancelled" || match.isLocked).length;
+
+  const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
+  const sitOutCounts: number[] = engineState?.sitOuts
+    ? Object.entries(engineState.sitOuts as Record<string, number>).filter(([id]) => activePlayerIds.has(id)).map(([, v]) => v)
+    : [];
+  const sitOutSpread = sitOutCounts.length > 0 ? Math.max(...sitOutCounts) - Math.min(...sitOutCounts) : null;
+
   const sessionTone = statusTone(session.status);
   const primaryActionStyle: CSSProperties = {
     height: 44,
@@ -304,6 +278,175 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     fontWeight: 900,
     cursor: "pointer",
   };
+
+  function renderMatchCard(m: any) {
+    const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
+    const inMatch = new Set<string>([
+      ...m.teamA.map((p: any) => p.playerId),
+      ...m.teamB.map((p: any) => p.playerId),
+    ]);
+    const eligibleForSwap = players.filter(
+      (p) => !inMatch.has(p.playerId) && (p.status === "active" || p.status === "checked_in")
+    );
+    const renderSwap = (p: any, alignRight: boolean) => {
+      const key = `${m.id}:${p.playerId}`;
+      return (
+        <div key={p.playerId} data-testid="match-player" style={{ display: "grid", gap: "0.375rem", justifyItems: alignRight ? "end" : "start" }}>
+          <span style={{ fontWeight: 900 }}>{p.displayName}</span>
+          {canManageLive && !isLocked && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", maxWidth: "100%" }}>
+              <select
+                value={swapSelections[`${m.id}:${p.playerId}`] ?? ""}
+                onChange={(e) => setSwapSelections((prev) => ({ ...prev, [key]: e.target.value }))}
+                className="pb-input"
+                style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem" }}
+              >
+                <option value="">Swap with...</option>
+                {eligibleForSwap.map((ep) => (
+                  <option key={ep.playerId} value={ep.playerId}>{ep.displayName}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleSwapPlayer(m.id, p.playerId)}
+                disabled={!swapSelections[key]}
+                style={{
+                  height: 34,
+                  padding: "0 0.5rem",
+                  border: "none",
+                  borderRadius: "var(--r-md)",
+                  background: "var(--ink-800)",
+                  color: "var(--volt-500)",
+                  fontWeight: 900,
+                  opacity: swapSelections[key] ? 1 : 0.45,
+                  cursor: "pointer",
+                }}
+              >
+                Go
+              </button>
+            </span>
+          )}
+        </div>
+      );
+    };
+    const matchTone = statusTone(m.status);
+    return (
+      <div key={m.id} data-testid="match-card" data-match-id={m.id} data-locked={isLocked} style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-xl)",
+        padding: "1rem",
+        marginBottom: "0.875rem",
+        boxShadow: "var(--shadow-sm)",
+        opacity: isLocked ? 0.85 : 1,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", marginBottom: "0.875rem" }}>
+          <div>
+            <p style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", fontWeight: 900 }}>
+              {m.courtName ?? `Court ${m.courtId}`}
+            </p>
+            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Match #{m.roundNumber}</p>
+          </div>
+          <span style={{
+            padding: "4px 8px",
+            borderRadius: "var(--r-pill)",
+            background: isLocked ? "var(--n-200)" : matchTone.bg,
+            color: isLocked ? "var(--text-3)" : matchTone.fg,
+            fontSize: "0.75rem",
+            fontWeight: 900,
+            whiteSpace: "nowrap",
+          }}>
+            {isLocked ? "Locked" : titleCase(m.status)}
+          </span>
+        </div>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: "0.75rem",
+          alignItems: "stretch",
+          marginBottom: "0.875rem",
+        }}>
+          <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0 }}>
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team A</p>
+            {m.teamA.map((p: any) => renderSwap(p, false))}
+          </div>
+          <div style={{ display: "grid", placeItems: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</div>
+          <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0, textAlign: "right" }}>
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team B</p>
+            {m.teamB.map((p: any) => renderSwap(p, true))}
+          </div>
+        </div>
+
+        {canManageLive && !isLocked && (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
+            <select
+              value={moveSelections[m.id] ?? ""}
+              onChange={(e) => setMoveSelections((prev) => ({ ...prev, [m.id]: e.target.value }))}
+              className="pb-input"
+              style={{ height: 40, borderRadius: "var(--r-md)", width: 190, padding: "0 0.75rem", fontSize: "0.8125rem" }}
+            >
+              <option value="">Move to court...</option>
+              {activeCourts.filter((c) => c.courtId !== m.courtId).map((c) => (
+                <option key={c.courtId} value={c.courtId}>{c.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => handleMoveMatch(m.id)}
+              disabled={!moveSelections[m.id]}
+              style={{
+                height: 40,
+                padding: "0 0.75rem",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-md)",
+                background: "var(--surface)",
+                fontWeight: 900,
+                opacity: moveSelections[m.id] ? 1 : 0.45,
+                cursor: "pointer",
+              }}
+            >
+              Move
+            </button>
+          </div>
+        )}
+
+        {canScore && !isLocked && (
+          <div style={{ marginBottom: "0.625rem" }}>
+            <button
+              data-testid="finish-game-btn"
+              onClick={() => handleFinishGame(m.id)}
+              style={{
+                width: "100%",
+                height: 44,
+                border: "2px solid var(--volt-500)",
+                borderRadius: "var(--r-md)",
+                background: "transparent",
+                color: "var(--volt-500)",
+                fontWeight: 900,
+                cursor: "pointer",
+                fontSize: "0.9375rem",
+                letterSpacing: "0.02em",
+              }}
+            >
+              ✓ Finish Game (No Score)
+            </button>
+          </div>
+        )}
+
+        {canScore && !isLocked && session!.scoringMode === "points" ? (
+          <form onSubmit={(e) => submitScorePoints(m.id, e)} style={{ display: "grid", gridTemplateColumns: "80px auto 80px minmax(120px, auto)", gap: "0.5rem", alignItems: "center" }}>
+            <input data-testid="score-team-a-input" name="teamA" type="number" required defaultValue={m.scorePayload?.teamAScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
+            <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
+            <input data-testid="score-team-b-input" name="teamB" type="number" required defaultValue={m.scorePayload?.teamBScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
+            <button data-testid="save-score-btn" type="submit" style={primaryActionStyle}>Save Score</button>
+          </form>
+        ) : canScore && !isLocked ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+            <button data-testid="score-winner-a" onClick={() => submitScoreWinnerOnly(m.id, "A")} style={m.winnerTeam === "A" ? primaryActionStyle : secondaryActionStyle}>A Wins</button>
+            <button data-testid="score-winner-b" onClick={() => submitScoreWinnerOnly(m.id, "B")} style={m.winnerTeam === "B" ? primaryActionStyle : secondaryActionStyle}>B Wins</button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -363,7 +506,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {session.name}
               </h1>
               <p style={{ color: "rgba(246,248,244,0.72)", marginTop: "0.5rem", maxWidth: 760 }}>
-                Live console · {titleCase(session.scoringMode)} scoring · Round {session.currentRoundNumber || 0}
+                Live console · {titleCase(session.scoringMode)} scoring · courts run independently
               </p>
             </div>
             <div style={{
@@ -397,24 +540,23 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               { label: "Courts", value: activeCourts.length },
               { label: "Matches", value: matches.length },
               { label: "Locked", value: lockedMatches },
-              { label: "Rounds", value: rounds.length },
-              ...(latestFairnessScore !== null ? [{ label: "Fairness", value: `${Math.round(latestFairnessScore * 100)}%` }] : []),
+              ...(sitOutSpread !== null ? [{ label: "Sit-out spread", value: sitOutSpread }] : []),
             ].map((stat) => (
-              <div key={stat.label} data-testid={stat.label === "Fairness" ? "fairness-chip" : undefined} style={{
-                background: stat.label === "Fairness"
-                  ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "rgba(198,241,53,0.18)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "rgba(255,200,50,0.18)" : "rgba(255,80,80,0.18)")
+              <div key={stat.label} data-testid={stat.label === "Sit-out spread" ? "fairness-chip" : undefined} style={{
+                background: stat.label === "Sit-out spread"
+                  ? (sitOutSpread !== null && sitOutSpread <= 1 ? "rgba(198,241,53,0.18)" : "rgba(255,200,50,0.18)")
                   : "rgba(246,248,244,0.08)",
-                border: stat.label === "Fairness"
-                  ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "1px solid rgba(198,241,53,0.35)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "1px solid rgba(255,200,50,0.35)" : "1px solid rgba(255,80,80,0.35)")
+                border: stat.label === "Sit-out spread"
+                  ? (sitOutSpread !== null && sitOutSpread <= 1 ? "1px solid rgba(198,241,53,0.35)" : "1px solid rgba(255,200,50,0.35)")
                   : "1px solid rgba(246,248,244,0.12)",
                 borderRadius: "var(--r-xl)",
                 padding: "1rem",
               }}>
-                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: stat.label === "Fairness" ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "var(--volt-500)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "#ffc832" : "#ff6060") : "var(--volt-500)", lineHeight: 1 }}>
+                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: stat.label === "Sit-out spread" ? (sitOutSpread !== null && sitOutSpread <= 1 ? "var(--volt-500)" : "#ffc832") : "var(--volt-500)", lineHeight: 1 }}>
                   {stat.value}
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 6 }}>
-                  {stat.label === "Fairness" ? "🟢 Rotation Health" : stat.label}
+                  {stat.label === "Sit-out spread" ? "🟢 Rotation Health" : stat.label}
                 </div>
               </div>
             ))}
@@ -458,7 +600,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
               Session Controls
             </h2>
-            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Generate, run rounds, and rebalance future matches.</p>
+            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Generate, run courts, and rebalance current matches.</p>
           </div>
           <a href={`/sessions/${sessionId}`} style={{
             height: 42,
@@ -477,13 +619,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         {canGenerate && (session.status === "draft" || session.status === "scheduled") && (
           <button data-testid="generate-schedule-btn" onClick={handleGenerate} style={primaryActionStyle}>Generate Schedule</button>
         )}
-        {canControlSession && (session.status === "draft" || session.status === "scheduled") && rounds.length > 0 && (
+        {canControlSession && (session.status === "draft" || session.status === "scheduled") && matches.length > 0 && (
           <button data-testid="start-session-btn" onClick={handleStart} style={primaryActionStyle}>Start Session</button>
         )}
         {canControlSession && session.status === "active" && (
           <>
             <button onClick={() => pauseSession({ sessionId })} style={secondaryActionStyle}>Pause</button>
-            {canAdvance && <button data-testid="advance-round-btn" onClick={handleAdvance} style={primaryActionStyle}>Advance Round</button>}
             <button data-testid="complete-session-btn" onClick={() => completeSession({ sessionId })} style={{ ...secondaryActionStyle, color: "var(--danger)" }}>Complete Session</button>
           </>
         )}
@@ -491,12 +632,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           <button onClick={() => resumeSession({ sessionId })} style={primaryActionStyle}>Resume</button>
         )}
         {canGenerate && isLive && (
-          <button data-testid="rebalance-btn" onClick={() => handleRebalance("manual_rebalance")} style={{ ...primaryActionStyle, background: "var(--volt-500)", color: "var(--ink-800)" }}>Rebalance Future Rounds</button>
+          <button data-testid="rebalance-btn" onClick={() => handleRebalance("manual_rebalance")} style={{ ...primaryActionStyle, background: "var(--volt-500)", color: "var(--ink-800)" }}>Re-pick Current Matches</button>
         )}
         </div>
       </section>
 
-      {/* Courts management (M6: disable court) */}
+      {/* Courts management */}
       {canManageLive && isLive && session.courts && session.courts.length > 0 && (
         <section style={{
           background: "var(--surface)",
@@ -545,14 +686,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         gap: "1rem",
         alignItems: "start",
       }}>
-        {/* Matches for current round */}
-        <section data-testid="round-card" data-round={session.currentRoundNumber || 1} style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
+        {/* Court-centric live board: each court shows its current match, filled
+            automatically the instant it frees up — no round barrier. */}
+        <section style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
-              Matches
-            </span>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-3)" }}>
-              Round {session.currentRoundNumber || 1}
+              Courts
             </span>
           </div>
           {matches.length === 0 && (
@@ -569,175 +708,34 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               <p style={{ color: "var(--text-2)" }}>Generate schedule after enough players join.</p>
             </div>
           )}
-          {matches.map(m => {
-            const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
-            const inMatch = new Set<string>([
-              ...m.teamA.map((p: any) => p.playerId),
-              ...m.teamB.map((p: any) => p.playerId),
-            ]);
-            const eligibleForSwap = players.filter(
-              (p) => !inMatch.has(p.playerId) && (p.status === "active" || p.status === "checked_in")
-            );
-            const renderSwap = (p: any, alignRight: boolean) => {
-              const key = `${m.id}:${p.playerId}`;
-              return (
-                <div key={p.playerId} data-testid="match-player" style={{ display: "grid", gap: "0.375rem", justifyItems: alignRight ? "end" : "start" }}>
-                  <span style={{ fontWeight: 900 }}>{p.displayName}</span>
-                  {canManageLive && !isLocked && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", maxWidth: "100%" }}>
-                      <select
-                        value={swapSelections[`${m.id}:${p.playerId}`] ?? ""}
-                        onChange={(e) => setSwapSelections((prev) => ({ ...prev, [key]: e.target.value }))}
-                        className="pb-input"
-                        style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem" }}
-                      >
-                        <option value="">Swap with...</option>
-                        {eligibleForSwap.map((ep) => (
-                          <option key={ep.playerId} value={ep.playerId}>{ep.displayName}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={() => handleSwapPlayer(m.id, m.roundNumber, p.playerId)}
-                        disabled={!swapSelections[key]}
-                        style={{
-                          height: 34,
-                          padding: "0 0.5rem",
-                          border: "none",
-                          borderRadius: "var(--r-md)",
-                          background: "var(--ink-800)",
-                          color: "var(--volt-500)",
-                          fontWeight: 900,
-                          opacity: swapSelections[key] ? 1 : 0.45,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Go
-                      </button>
-                    </span>
-                  )}
-                </div>
-              );
-            };
-            const matchTone = statusTone(m.status);
+          {activeCourts.map((court) => {
+            const current = scheduledByCourtId.get(court.courtId);
+            if (current) return renderMatchCard(current);
             return (
-              <div key={m.id} data-testid="match-card" data-match-id={m.id} data-locked={isLocked} style={{
+              <div key={court.courtId} data-testid="court-empty" style={{
                 background: "var(--surface)",
-                border: "1px solid var(--border)",
+                border: "2px dashed var(--border)",
                 borderRadius: "var(--r-xl)",
-                padding: "1rem",
+                padding: "1.25rem",
                 marginBottom: "0.875rem",
-                boxShadow: "var(--shadow-sm)",
-                opacity: isLocked ? 0.85 : 1,
+                textAlign: "center",
               }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center", marginBottom: "0.875rem" }}>
-                  <div>
-                    <p style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", fontWeight: 900 }}>
-                      Match {m.matchNumber}
-                    </p>
-                    <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Court {m.courtId}</p>
-                  </div>
-                  <span style={{
-                    padding: "4px 8px",
-                    borderRadius: "var(--r-pill)",
-                    background: isLocked ? "var(--n-200)" : matchTone.bg,
-                    color: isLocked ? "var(--text-3)" : matchTone.fg,
-                    fontSize: "0.75rem",
-                    fontWeight: 900,
-                    whiteSpace: "nowrap",
-                  }}>
-                    {isLocked ? "Locked" : titleCase(m.status)}
-                  </span>
-                </div>
-                <div style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr auto 1fr",
-                  gap: "0.75rem",
-                  alignItems: "stretch",
-                  marginBottom: "0.875rem",
-                }}>
-                  <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0 }}>
-                    <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team A</p>
-                    {m.teamA.map((p: any) => renderSwap(p, false))}
-                  </div>
-                  <div style={{ display: "grid", placeItems: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</div>
-                  <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0, textAlign: "right" }}>
-                    <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team B</p>
-                    {m.teamB.map((p: any) => renderSwap(p, true))}
-                  </div>
-                </div>
-
-                {canManageLive && !isLocked && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
-                    <select
-                      value={moveSelections[m.id] ?? ""}
-                      onChange={(e) => setMoveSelections((prev) => ({ ...prev, [m.id]: e.target.value }))}
-                      className="pb-input"
-                      style={{ height: 40, borderRadius: "var(--r-md)", width: 190, padding: "0 0.75rem", fontSize: "0.8125rem" }}
-                    >
-                      <option value="">Move to court...</option>
-                      {activeCourts.map((c) => (
-                        <option key={c.courtId} value={c.courtId}>{c.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => handleMoveMatch(m.id, m.roundNumber)}
-                      disabled={!moveSelections[m.id]}
-                      style={{
-                        height: 40,
-                        padding: "0 0.75rem",
-                        border: "1px solid var(--border)",
-                        borderRadius: "var(--r-md)",
-                        background: "var(--surface)",
-                        fontWeight: 900,
-                        opacity: moveSelections[m.id] ? 1 : 0.45,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Move
-                    </button>
-                  </div>
-                )}
-
-                {/* One-tap Finish Game button — optional score entry */}
-                {canScore && !isLocked && (
-                  <div style={{ marginBottom: "0.625rem" }}>
-                    <button
-                      data-testid="finish-game-btn"
-                      onClick={() => handleFinishGame(m.id)}
-                      style={{
-                        width: "100%",
-                        height: 44,
-                        border: "2px solid var(--volt-500)",
-                        borderRadius: "var(--r-md)",
-                        background: "transparent",
-                        color: "var(--volt-500)",
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        fontSize: "0.9375rem",
-                        letterSpacing: "0.02em",
-                      }}
-                    >
-                      ✓ Finish Game (No Score)
-                    </button>
-                  </div>
-                )}
-
-                {canScore && !isLocked && session.scoringMode === "points" ? (
-                  <form onSubmit={(e) => submitScorePoints(m.id, e)} style={{ display: "grid", gridTemplateColumns: "80px auto 80px minmax(120px, auto)", gap: "0.5rem", alignItems: "center" }}>
-                    <input data-testid="score-team-a-input" name="teamA" type="number" required defaultValue={m.scorePayload?.teamAScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
-                    <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
-                    <input data-testid="score-team-b-input" name="teamB" type="number" required defaultValue={m.scorePayload?.teamBScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
-                    <button data-testid="save-score-btn" type="submit" style={primaryActionStyle}>Save Score</button>
-                  </form>
-                ) : canScore && !isLocked ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                    <button data-testid="score-winner-a" onClick={() => submitScoreWinnerOnly(m.id, "A")} style={m.winnerTeam === "A" ? primaryActionStyle : secondaryActionStyle}>A Wins</button>
-                    <button data-testid="score-winner-b" onClick={() => submitScoreWinnerOnly(m.id, "B")} style={m.winnerTeam === "B" ? primaryActionStyle : secondaryActionStyle}>B Wins</button>
-                  </div>
-                ) : null}
+                <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
               </div>
             );
           })}
+
+          {historyMatches.length > 0 && (
+            <div style={{ marginTop: "1.5rem" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                History
+              </span>
+              <div style={{ marginTop: "0.625rem" }}>
+                {historyMatches.map((m) => renderMatchCard(m))}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Leaderboard */}
@@ -786,7 +784,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </aside>
       </main>
 
-      {/* Roster management (M6) */}
+      {/* Roster management */}
       {canManageLive && isLive && (
         <section style={{
           background: "var(--surface)",
@@ -802,7 +800,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             Roster Management
           </h2>
 
-          {/* Active players */}
           <div>
             <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.625rem" }}>
               Active Players ({activePlayers.length})
@@ -839,7 +836,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             </div>
           </div>
 
-          {/* Other players (left/removed/waiting/no_show) */}
           {otherPlayers.length > 0 && (
             <div>
               <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.625rem" }}>
@@ -856,13 +852,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             </div>
           )}
 
-          {/* Add late player */}
           <div>
             <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.625rem" }}>
               Add Late Player
             </h3>
             {(() => {
-              // Filter out players already in the session
               const sessionPlayerIds = new Set(players.map((p) => p.id));
               const available = groupPlayers.filter((gp) => !sessionPlayerIds.has(gp.id));
               if (groupPlayers.length === 0) {

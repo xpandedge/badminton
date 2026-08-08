@@ -157,31 +157,19 @@ export default function Home() {
           </button>
         </Link>
 
-        <Link
-          href="/sign-in?redirect=/sessions/new"
-          style={{ textDecoration: "none", animation: "pb-rise 500ms 120ms var(--ease-out) both", display: "block" }}
-        >
-          <button
-            className="pb-btn"
-            style={{ height: 52, fontSize: "0.9375rem", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(246,248,244,0.8)" }}
-          >
-            ⚡ Start playing
-          </button>
-        </Link>
-
-        {/* Milestone note */}
+        {/* Tagline */}
         <p
           style={{
             textAlign: "center",
             fontFamily: "var(--font-mono)",
             fontSize: "0.6875rem",
-            letterSpacing: "0.1em",
+            letterSpacing: "0.08em",
             textTransform: "uppercase",
             color: "var(--text-3)",
             animation: "pb-fade 600ms 200ms var(--ease-out) both",
           }}
         >
-          M0 · Foundation wired · Next: auth & roles
+          Fair games · live scores · zero WhatsApp maths
         </p>
       </div>
     </div>

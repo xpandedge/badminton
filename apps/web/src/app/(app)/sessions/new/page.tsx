@@ -11,71 +11,6 @@ import { useSportPreference } from "@/lib/sport/SportPreferenceContext";
 
 const ESTIMATED_GAME_MINUTES = 15;
 
-function Stepper({
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <button
-        type="button"
-        onClick={() => onChange(Math.max(min, value - 1))}
-        style={{
-          width: 44, height: 44, padding: 0,
-          borderRadius: "var(--r-lg)",
-          border: "1.5px solid var(--border)",
-          background: "var(--surface-sunken)",
-          color: "var(--text-1)",
-          fontSize: 22, fontWeight: 900,
-          cursor: "pointer", lineHeight: 1,
-          flexShrink: 0,
-        }}
-      >
-        −
-      </button>
-      <div style={{
-        flex: 1,
-        textAlign: "center",
-        fontFamily: "var(--font-display-tight)",
-        fontSize: "1.5rem",
-        fontWeight: 900,
-        color: "var(--text-1)",
-        letterSpacing: "-0.03em",
-        padding: "0.5rem 0",
-        background: "var(--surface-sunken)",
-        borderRadius: "var(--r-lg)",
-        border: "1.5px solid var(--border)",
-      }}>
-        {value}
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange(Math.min(max, value + 1))}
-        style={{
-          width: 44, height: 44, padding: 0,
-          borderRadius: "var(--r-lg)",
-          border: "none",
-          background: "var(--volt-500)",
-          color: "var(--ink-800)",
-          fontSize: 22, fontWeight: 900,
-          cursor: "pointer", lineHeight: 1,
-          flexShrink: 0,
-          boxShadow: "0 2px 10px rgba(198,241,53,0.35)",
-        }}
-      >
-        +
-      </button>
-    </div>
-  );
-}
-
 export default function NewSessionPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -91,7 +26,7 @@ export default function NewSessionPage() {
 
   const [name, setName] = useState("Saturday Social");
   const [sport, setSport] = useState<"badminton" | "pickleball">("pickleball");
-  const [rounds, setRounds] = useState(6);
+  const [durationMinutes, setDurationMinutes] = useState(90);
   const [scoringMode, setScoringMode] = useState<"winner_only" | "points">("points");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -137,7 +72,6 @@ export default function NewSessionPage() {
 
   const selectedGroupName = groups.find((g) => g.id === groupId)?.name ?? "—";
   const canCreate = !!user && !!groupId && !!venueName.trim() && courtNames.length > 0 && !!name.trim() && !isSubmitting;
-  const durationMinutes = rounds * ESTIMATED_GAME_MINUTES;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,7 +136,7 @@ export default function NewSessionPage() {
               {selectedGroupName !== "—" ? selectedGroupName : "Create Session"}
             </div>
             <div style={{ fontSize: "0.8125rem", color: "rgba(246,248,244,0.55)", marginTop: "0.375rem" }}>
-              {rounds} round{rounds !== 1 ? "s" : ""} · {courtNames.length} court{courtNames.length !== 1 ? "s" : ""} · {sport}
+              {durationMinutes} min · {courtNames.length} court{courtNames.length !== 1 ? "s" : ""} · {sport}
             </div>
           </div>
           <div style={{
@@ -356,34 +290,28 @@ export default function NewSessionPage() {
             fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
             letterSpacing: "0.14em", textTransform: "uppercase",
             color: "var(--text-3)", marginBottom: "-0.25rem",
-          }}>Schedule</div>
+          }}>How long are you playing?</div>
 
-          <div style={{ display: "grid", gap: "0.4rem" }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Rounds</span>
-            <Stepper value={rounds} min={1} max={20} onChange={setRounds} />
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.05em" }}>
-              ~{durationMinutes} min total · {ESTIMATED_GAME_MINUTES} min per game
-            </div>
-          </div>
-
-          {/* Quick presets */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.375rem" }}>
-            {[3, 4, 6, 8].map((r) => (
+            {[60, 90, 120, 180].map((mins) => (
               <button
-                key={r}
+                key={mins}
                 type="button"
-                onClick={() => setRounds(r)}
+                onClick={() => setDurationMinutes(mins)}
                 style={{
-                  height: 36,
+                  height: 44,
                   borderRadius: "var(--r-md)",
                   border: "1px solid var(--border)",
-                  background: rounds === r ? "var(--volt-500)" : "var(--surface-sunken)",
-                  color: rounds === r ? "var(--ink-800)" : "var(--text-2)",
+                  background: durationMinutes === mins ? "var(--volt-500)" : "var(--surface-sunken)",
+                  color: durationMinutes === mins ? "var(--ink-800)" : "var(--text-2)",
                   fontWeight: 800, fontSize: "0.8125rem",
                   cursor: "pointer",
                 }}
-              >{r}r</button>
+              >{mins < 120 ? `${mins}m` : `${mins / 60}h`}</button>
             ))}
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.05em" }}>
+            Courts refill automatically as games finish — no rounds to manage.
           </div>
         </section>
 
@@ -394,7 +322,7 @@ export default function NewSessionPage() {
           disabled={!canCreate}
           style={{ marginTop: "0.25rem", animation: "pb-rise 360ms 160ms var(--ease-out) both" }}
         >
-          {isSubmitting ? "Creating…" : `Create ${rounds}-round Session →`}
+          {isSubmitting ? "Creating…" : "Create Session →"}
         </button>
 
       </form>

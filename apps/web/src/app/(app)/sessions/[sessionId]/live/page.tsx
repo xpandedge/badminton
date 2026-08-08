@@ -226,25 +226,18 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const scheduledMatches = matches.filter((m) => m.status === "scheduled");
   const scheduledByCourtId = new Map(scheduledMatches.map((m) => [m.courtId, m]));
+  const doneMatches = matches.filter((m) => m.status === "completed").sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0));
   const lockedMatches = matches.filter((match) => match.status === "completed" || match.status === "cancelled" || match.isLocked).length;
 
-  // Group matches into round tiles — the highest round number is "current"
-  // (shown first, on top); earlier rounds sit below as read history. Courts
-  // waiting for enough idle players (no match yet) attach to the current tile.
-  const matchesByRound = new Map<number, any[]>();
-  for (const m of matches) {
-    const rn = m.roundNumber ?? 0;
-    if (!matchesByRound.has(rn)) matchesByRound.set(rn, []);
-    matchesByRound.get(rn)!.push(m);
-  }
-  const roundNumbersDesc = [...matchesByRound.keys()].sort((a, b) => b - a);
-  const emptyCourts = activeCourts.filter((c) => !scheduledByCourtId.has(c.courtId));
+  // Who's on the bench right now: active players not currently in a scheduled match.
+  const playingNowIds = new Set<string>(scheduledMatches.flatMap((m) => [...(m.teamAIds ?? []), ...(m.teamBIds ?? [])]));
+  const benchPlayers = activePlayers.filter((p) => !playingNowIds.has(p.playerId));
 
-  const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
-  const sitOutCounts: number[] = engineState?.sitOuts
-    ? Object.entries(engineState.sitOuts as Record<string, number>).filter(([id]) => activePlayerIds.has(id)).map(([, v]) => v)
-    : [];
-  const sitOutSpread = sitOutCounts.length > 0 ? Math.max(...sitOutCounts) - Math.min(...sitOutCounts) : null;
+  // Games played per active player (from the live leaderboard) → fairness at a glance.
+  const gamesById = new Map<string, number>(leaderboard.map((r: any) => [r.playerId, r.gamesPlayed ?? 0]));
+  const gamesFor = (id: string) => gamesById.get(id) ?? 0;
+  const activeGameCounts = activePlayers.map((p) => gamesFor(p.playerId));
+  const gamesSpread = activeGameCounts.length > 0 ? Math.max(...activeGameCounts) - Math.min(...activeGameCounts) : null;
 
   const sessionTone = statusTone(session.status);
   const primaryActionStyle: CSSProperties = {
@@ -313,7 +306,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <p style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", fontWeight: 900 }}>
               {m.courtName ?? `Court ${m.courtId}`}
             </p>
-            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Match #{m.roundNumber}</p>
           </div>
           <span style={{
             padding: "4px 8px",
@@ -488,28 +480,28 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             {[
               { label: "Players", value: players.length },
               { label: "Courts", value: activeCourts.length },
-              { label: "Matches", value: matches.length },
-              { label: "Locked", value: lockedMatches },
-              ...(sitOutSpread !== null ? [{ label: "Sit-out spread", value: sitOutSpread }] : []),
-            ].map((stat) => (
-              <div key={stat.label} data-testid={stat.label === "Sit-out spread" ? "fairness-chip" : undefined} style={{
-                background: stat.label === "Sit-out spread"
-                  ? (sitOutSpread !== null && sitOutSpread <= 1 ? "rgba(198,241,53,0.18)" : "rgba(255,200,50,0.18)")
-                  : "rgba(246,248,244,0.08)",
-                border: stat.label === "Sit-out spread"
-                  ? (sitOutSpread !== null && sitOutSpread <= 1 ? "1px solid rgba(198,241,53,0.35)" : "1px solid rgba(255,200,50,0.35)")
-                  : "1px solid rgba(246,248,244,0.12)",
+              { label: "Games played", value: matches.filter((m) => m.status === "completed").length },
+              { label: "On bench", value: benchPlayers.length },
+              ...(gamesSpread !== null ? [{ label: "Fairness", value: gamesSpread <= 1 ? "Even" : `±${gamesSpread}` }] : []),
+            ].map((stat) => {
+              const isFair = stat.label === "Fairness";
+              const good = gamesSpread !== null && gamesSpread <= 1;
+              return (
+              <div key={stat.label} data-testid={isFair ? "fairness-chip" : undefined} style={{
+                background: isFair ? (good ? "rgba(198,241,53,0.18)" : "rgba(255,200,50,0.18)") : "rgba(246,248,244,0.08)",
+                border: isFair ? (good ? "1px solid rgba(198,241,53,0.35)" : "1px solid rgba(255,200,50,0.35)") : "1px solid rgba(246,248,244,0.12)",
                 borderRadius: "var(--r-xl)",
                 padding: "1rem",
               }}>
-                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: stat.label === "Sit-out spread" ? (sitOutSpread !== null && sitOutSpread <= 1 ? "var(--volt-500)" : "#ffc832") : "var(--volt-500)", lineHeight: 1 }}>
+                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: isFair ? (good ? "var(--volt-500)" : "#ffc832") : "var(--volt-500)", lineHeight: 1 }}>
                   {stat.value}
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 6 }}>
-                  {stat.label === "Sit-out spread" ? "🟢 Rotation Health" : stat.label}
+                  {isFair ? "🟢 Rotation Health" : stat.label}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
@@ -633,9 +625,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         gap: "1rem",
         alignItems: "start",
       }}>
-        {/* Round tiles: courts still advance independently (no barrier), but
-            matches are grouped by round for display — current round on top,
-            earlier rounds' results visible underneath. */}
+        {/* Court-centric live board — each court shows its current match, filled
+            automatically the instant it frees up. A bench strip answers "who's
+            sitting out right now" and finished games sit below as history. */}
         <section style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
           {matches.length === 0 && (
             <div style={{
@@ -651,32 +643,64 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               <p style={{ color: "var(--text-2)" }}>Generate schedule after enough players join.</p>
             </div>
           )}
-          {roundNumbersDesc.map((rn, idx) => {
-            const isCurrent = idx === 0;
-            return (
-              <div key={rn} style={{ marginBottom: "1.5rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem" }}>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: isCurrent ? "var(--text-1)" : "var(--text-3)", fontWeight: isCurrent ? 900 : 400 }}>
-                    Round {rn}{isCurrent ? " · Current" : ""}
-                  </span>
-                </div>
-                {matchesByRound.get(rn)!.map((m) => renderMatchCard(m))}
-                {isCurrent && emptyCourts.map((court) => (
-                  <div key={court.courtId} data-testid="court-empty" style={{
-                    background: "var(--surface)",
-                    border: "2px dashed var(--border)",
-                    borderRadius: "var(--r-xl)",
-                    padding: "1.25rem",
-                    marginBottom: "0.875rem",
-                    textAlign: "center",
+
+          {/* Bench strip: who is sitting out this moment */}
+          {isLive && matches.length > 0 && (
+            <div data-testid="bench-strip" style={{
+              background: benchPlayers.length > 0 ? "var(--surface-sunken)" : "transparent",
+              border: benchPlayers.length > 0 ? "1px solid var(--border)" : "1px dashed var(--border)",
+              borderRadius: "var(--r-xl)", padding: "0.75rem 1rem", marginBottom: "1rem",
+              display: "flex", alignItems: "center", gap: "0.625rem", flexWrap: "wrap",
+            }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                🪑 On the bench
+              </span>
+              {benchPlayers.length === 0 ? (
+                <span style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Everyone's on a court</span>
+              ) : (
+                benchPlayers.map((p) => (
+                  <span key={p.playerId} style={{
+                    padding: "3px 10px", borderRadius: "var(--r-pill)", background: "var(--surface)",
+                    border: "1px solid var(--border)", fontSize: "0.8125rem", fontWeight: 700,
                   }}>
-                    <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
-                    <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
-                  </div>
-                ))}
+                    {p.displayName} <span style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: "0.6875rem" }}>{gamesFor(p.playerId)}g</span>
+                  </span>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Live courts */}
+          {activeCourts.map((court) => {
+            const current = scheduledByCourtId.get(court.courtId);
+            if (current) return renderMatchCard(current);
+            if (!isLive) return null;
+            return (
+              <div key={court.courtId} data-testid="court-empty" style={{
+                background: "var(--surface)",
+                border: "2px dashed var(--border)",
+                borderRadius: "var(--r-xl)",
+                padding: "1.25rem",
+                marginBottom: "0.875rem",
+                textAlign: "center",
+              }}>
+                <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
               </div>
             );
           })}
+
+          {/* Finished games */}
+          {doneMatches.length > 0 && (
+            <div style={{ marginTop: "1.5rem" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                Finished games
+              </span>
+              <div style={{ marginTop: "0.625rem" }}>
+                {doneMatches.map((m) => renderMatchCard(m))}
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Leaderboard */}

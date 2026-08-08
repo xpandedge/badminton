@@ -1,0 +1,43 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.next/
+out/
+# lib/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+serviceAccount*.json
+*-firebase-adminsdk-*.json
+# firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# test / coverage
+coverage/
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/.playwright/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# superpowers brainstorm artifacts
+.superpowers/
+
+# Claude Code local workspace (worktrees, memory, session state)
+.claude/

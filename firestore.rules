@@ -1,0 +1,195 @@
+rules_version = '2';
+
+// PRD §19 + DELTA_SPEC D5, D6, D8.
+// Authoritative writes go through apps/web/src/server/** (firebase-admin, bypasses rules).
+// Rules are defense-in-depth: clients may READ, but cannot WRITE matches/leaderboards/global players.
+//
+// Role tiers (groups/{id}/members.role):
+//   owner     - full control
+//   organiser - can create/update sessions, manage players/venues
+//   member    - read-only on group content; scoring/generate/rebalance go via server actions (admin SDK)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isSuperAdminToken() {
+      return signedIn() &&
+        request.auth.token.email in [
+          "pankaj4bharat@gmail.com",
+          "sanju36@gmail.com"
+        ];
+    }
+    function isSuperAdminProfile() {
+      // Guard: doc may not exist; field may be absent — use .get() to avoid eval errors.
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('emailLower', '') in [
+          "pankaj4bharat@gmail.com",
+          "sanju36@gmail.com"
+        ];
+    }
+    function isSuperAdmin() {
+      return isSuperAdminToken() || isSuperAdminProfile();
+    }
+
+    // Users can read/write only their own profile (PRD §19.1).
+    match /users/{userId} {
+      allow read: if (signedIn() && request.auth.uid == userId) || isSuperAdmin();
+      allow write: if signedIn() && request.auth.uid == userId;
+
+      // Per-user player roster for Quick Session cross-session fairness.
+      match /players/{playerId} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // Global player identity + stats — written only by the server tier (D8).
+    // Any signed-in user may read for leaderboard display.
+    match /players/{playerId} {
+      allow read: if signedIn();
+      allow write: if false; // Server tier (admin SDK) only
+    }
+
+    // Rate-limit buckets — server-tier internal, never client-accessible.
+    match /_rateLimits/{docId} {
+      allow read, write: if false;
+    }
+
+    match /groups/{groupId} {
+      function memberRole() {
+        // Use .get() with default to avoid eval error when 'role' field is absent.
+        return get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.get('role', '');
+      }
+      function isMember() {
+        return request.auth != null &&
+          exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid));
+      }
+      function isOwner() { return isMember() && memberRole() == "owner"; }
+      // organiser-level: owner or organiser role (PRD §19 three-tier model preserved for direct writes).
+      function isOrganiser() { return isMember() && memberRole() in ["owner", "organiser"]; }
+      function isGroupCreator() {
+        return get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == request.auth.uid;
+      }
+
+      allow read: if isSuperAdmin() || isMember() || (request.auth != null && request.auth.uid in resource.data.memberIds);
+      // Squad creation goes through createSquad server action; allow here for bootstrap compatibility.
+      allow create: if isSuperAdmin() || (request.auth != null && request.resource.data.createdBy == request.auth.uid);
+      allow update, delete: if isSuperAdmin() || isOwner();
+
+      match /members/{memberId} {
+        allow read: if isSuperAdmin() || isMember();
+        // Owner can write non-owner member docs. Bootstrap: group creator may write their own first (owner) doc.
+        allow create: if isSuperAdmin()
+          || (isOwner() && request.resource.data.get('role', '') != "owner")
+          || (isGroupCreator() && memberId == request.auth.uid);
+        allow update: if isSuperAdmin()
+          || (isOwner() && request.resource.data.get('role', '') != "owner");
+        allow delete: if isSuperAdmin() || (isOwner() && resource.data.get('role', '') != "owner");
+      }
+
+      match /players/{playerId} {
+        allow read: if isSuperAdmin() || isMember();
+        allow write: if isSuperAdmin() || isOrganiser(); // organiser+ manages group player roster
+      }
+
+      match /venues/{venueId} {
+        allow read: if isSuperAdmin() || isMember();
+        allow write: if isSuperAdmin() || isOrganiser();
+        match /courts/{courtId} {
+          allow read: if isSuperAdmin() || isMember();
+          allow write: if isSuperAdmin() || isOrganiser();
+        }
+      }
+    }
+
+    match /sessions/{sessionId} {
+      function getSessionGroupId() {
+        return get(/databases/$(database)/documents/sessions/$(sessionId)).data.groupId;
+      }
+      function getCreateSessionGroupId() {
+        return request.resource.data.groupId;
+      }
+      function sessionMemberRole(groupId) {
+        return get(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)).data.get('role', '');
+      }
+      function isSessionGroupMember() {
+        return request.auth != null &&
+          exists(/databases/$(database)/documents/groups/$(getSessionGroupId())/members/$(request.auth.uid));
+      }
+      // organiser+ within the session's group (owner or organiser role).
+      function isSessionGroupOrganiser() {
+        return isSessionGroupMember() &&
+          sessionMemberRole(getSessionGroupId()) in ["owner", "organiser"];
+      }
+      // organiser+ check for session create (uses request.resource.data.groupId).
+      function isCreateSessionGroupOrganiser() {
+        return request.auth != null &&
+          exists(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)).data.get('role', '') in ["owner", "organiser"];
+      }
+      function isSessionPlayer() {
+        return request.auth != null &&
+          exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
+      }
+
+      // organiser+ can create/update sessions; any member or session player can read.
+      allow read: if isSessionGroupMember() || isSessionPlayer();
+      allow create: if isCreateSessionGroupOrganiser();
+      allow update: if isSessionGroupOrganiser();
+
+      match /players/{playerId} {
+        allow read: if isSessionGroupMember() || request.auth.uid == playerId;
+        allow write: if false; // Server tier only (D6, D8)
+      }
+
+      // Only organiser+ may read/update join requests; create is server-only (D6).
+      match /joinRequests/{reqId} {
+        allow read, update: if isSessionGroupOrganiser();
+        allow create: if false; // Server tier only (D6)
+      }
+
+      match /rounds/{roundId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only (D8)
+
+        match /matches/{matchId} {
+          allow read: if isSessionGroupMember() || isSessionPlayer();
+          allow write: if false; // Server tier only (D8)
+        }
+      }
+
+      match /leaderboard/{playerId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only (D8)
+      }
+
+      match /sitOuts/{sitOutId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only
+      }
+
+      match /generationRuns/{runId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only
+      }
+
+      match /auditLogs/{logId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only
+      }
+    }
+
+    // Quick Sessions — auth-gated, owner-scoped.
+    match /quickSessions/{sessionId} {
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow read, update: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "picklebaddies",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Social Session Chaos Killer — badminton/pickleball social session manager",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev:web": "pnpm --filter @picklebaddies/web dev",
+    "dev:engine": "pnpm --filter @picklebaddies/match-engine test --watch",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "emulators": "firebase emulators:start",
+    "seed": "tsx scripts/seed.ts",
+    "dev:seed": "FIREBASE_ADMIN_PROJECT_ID=picklebaddies-85732 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 tsx scripts/dev-seed.ts",
+    "test:e2e:full": "firebase emulators:exec --only auth,firestore,functions --project picklebaddies-85732 \"pnpm dev:seed && pnpm --filter @picklebaddies/web test:e2e\""
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.0.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "firebase-tools": "^15.19.1"
+  }
+}

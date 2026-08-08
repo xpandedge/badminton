@@ -1,0 +1,35 @@
+{
+  "name": "@picklebaddies/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:devauth": "NEXT_PUBLIC_USE_EMULATORS=true NEXT_PUBLIC_DEV_AUTH=true NEXT_PUBLIC_FIREBASE_PROJECT_ID=picklebaddies-85732 FIREBASE_ADMIN_PROJECT_ID=picklebaddies-85732 next dev",
+    "build:deps": "pnpm --filter @picklebaddies/domain build && pnpm --filter @picklebaddies/match-engine build",
+    "build": "pnpm run build:deps && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rules": "firebase emulators:exec --only firestore --project picklebaddies-85732 \"vitest run --config vitest.rules.config.ts\"",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "firebase": "^11.1.0",
+    "next": "~15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@picklebaddies/domain": "workspace:*",
+    "@picklebaddies/match-engine": "workspace:*",
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

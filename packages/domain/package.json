@@ -1,0 +1,17 @@
+{
+  "name": "@picklebaddies/domain",
+  "version": "0.1.0",
+  "description": "Pure shared domain logic (roles, permissions, enums). Zero runtime deps.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

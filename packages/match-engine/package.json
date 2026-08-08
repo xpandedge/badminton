@@ -1,0 +1,17 @@
+{
+  "name": "@picklebaddies/match-engine",
+  "version": "0.1.0",
+  "description": "Pure, deterministic doubles match generator. Zero Firebase imports (D3).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

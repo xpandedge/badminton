@@ -1,0 +1,29 @@
+{
+  "name": "@picklebaddies/functions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloud Functions: schedule generation, rebalance, scoring, joins (PRD §16).",
+  "main": "lib/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc --build && node build.mjs",
+    "typecheck": "tsc --build",
+    "serve": "pnpm build && firebase emulators:start --only functions",
+    "test": "echo \"no unit tests for functions (integration via test:int)\" && exit 0",
+    "test:int": "firebase emulators:exec --only firestore,auth,functions --project picklebaddies-85732 \"vitest run --config vitest.int.config.ts\""
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.2.0"
+  },
+  "devDependencies": {
+    "@picklebaddies/domain": "workspace:*",
+    "@picklebaddies/match-engine": "workspace:*",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

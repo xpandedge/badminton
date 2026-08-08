@@ -1,0 +1,33 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": [
+    {
+      "source": "functions/lib",
+      "codebase": "default",
+      "runtime": "nodejs20",
+      "predeploy": [
+        "pnpm --filter @picklebaddies/domain build",
+        "pnpm --filter @picklebaddies/match-engine build",
+        "pnpm --filter @picklebaddies/functions build"
+      ]
+    }
+  ],
+  "hosting": {
+    "source": "apps/web",
+    "frameworksBackend": {
+      "region": "europe-west2"
+    },
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+  },
+  "emulators": {
+    "auth": { "port": 9099 },
+    "functions": { "port": 5001 },
+    "firestore": { "port": 8080 },
+    "hosting": { "port": 5000 },
+    "ui": { "enabled": true },
+    "singleProjectMode": false
+  }
+}

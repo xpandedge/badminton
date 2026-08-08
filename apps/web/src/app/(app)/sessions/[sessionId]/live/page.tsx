@@ -10,7 +10,7 @@ import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
 import { canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
-import { enterScore, finishGameWithoutScore } from "@/lib/sessions/scoring";
+import { enterScore } from "@/lib/sessions/scoring";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
 
 function titleCase(value: string) {
@@ -45,6 +45,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
 
   const [engineState, setEngineState] = useState<any | null>(null);
+  const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
 
   const leaderboardLogged = useRef(false);
   const { user } = useAuth();
@@ -167,13 +168,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     } catch (e: any) { setActionError(e.message); }
   };
 
-  const handleFinishGame = async (matchId: string) => {
-    setActionError(null);
-    try {
-      await finishGameWithoutScore(sessionId, matchId);
-    } catch (e: any) { setActionError(e.message); }
-  };
-
   const handleAddLatePlayer = async () => {
     const picked = groupPlayers.find((p) => p.id === selectedGroupPlayerId);
     if (!picked) return;
@@ -205,21 +199,22 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     } catch (e: any) { setActionError(e.message); }
   };
 
-  const submitScorePoints = async (matchId: string, e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  // Points are always optional — a winner tap alone is enough to finish a
+  // game; if valid points were entered, the winner is derived from them.
+  const submitWinner = async (matchId: string, winnerTeam: "A" | "B") => {
     setActionError(null);
-    const formData = new FormData(e.currentTarget);
-    const teamAScore = parseInt(formData.get("teamA") as string, 10);
-    const teamBScore = parseInt(formData.get("teamB") as string, 10);
+    const pts = pointInputs[matchId];
+    const a = pts?.a ? Number(pts.a) : undefined;
+    const b = pts?.b ? Number(pts.b) : undefined;
+    const hasValidPoints = typeof a === "number" && !Number.isNaN(a) && typeof b === "number" && !Number.isNaN(b) && a !== b;
+    const payload = hasValidPoints ? { teamAScore: a!, teamBScore: b! } : { winnerTeam };
     try {
-      await enterScore(sessionId, matchId, { teamAScore, teamBScore });
-    } catch (err: any) { setActionError(err.message); }
-  };
-
-  const submitScoreWinnerOnly = async (matchId: string, winnerTeam: "A" | "B") => {
-    setActionError(null);
-    try {
-      await enterScore(sessionId, matchId, { winnerTeam });
+      await enterScore(sessionId, matchId, payload as any);
+      setPointInputs((prev) => {
+        const next = { ...prev };
+        delete next[matchId];
+        return next;
+      });
     } catch (err: any) { setActionError(err.message); }
   };
 
@@ -230,9 +225,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const otherPlayers = players.filter((p) => p.status !== "active" && p.status !== "checked_in");
 
   const scheduledMatches = matches.filter((m) => m.status === "scheduled");
-  const historyMatches = matches.filter((m) => m.status !== "scheduled").sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0));
   const scheduledByCourtId = new Map(scheduledMatches.map((m) => [m.courtId, m]));
   const lockedMatches = matches.filter((match) => match.status === "completed" || match.status === "cancelled" || match.isLocked).length;
+
+  // Group matches into round tiles — the highest round number is "current"
+  // (shown first, on top); earlier rounds sit below as read history. Courts
+  // waiting for enough idle players (no match yet) attach to the current tile.
+  const matchesByRound = new Map<number, any[]>();
+  for (const m of matches) {
+    const rn = m.roundNumber ?? 0;
+    if (!matchesByRound.has(rn)) matchesByRound.set(rn, []);
+    matchesByRound.get(rn)!.push(m);
+  }
+  const roundNumbersDesc = [...matchesByRound.keys()].sort((a, b) => b - a);
+  const emptyCourts = activeCourts.filter((c) => !scheduledByCourtId.has(c.courtId));
 
   const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
   const sitOutCounts: number[] = engineState?.sitOuts
@@ -328,50 +334,66 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           alignItems: "stretch",
           marginBottom: "0.875rem",
         }}>
-          <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0 }}>
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team A</p>
+          <div style={{
+            background: m.winnerTeam === "A" ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
+            border: m.winnerTeam === "A" ? "1.5px solid var(--volt-500)" : "1.5px solid transparent",
+            borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0,
+          }}>
+            <p style={{ display: "flex", alignItems: "center", gap: "0.375rem", fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: m.winnerTeam === "A" ? "var(--volt-600)" : "var(--text-3)", marginBottom: "0.5rem" }}>
+              Team A {m.winnerTeam === "A" && "🏆"}
+            </p>
             {m.teamA.map((p: any) => renderSwap(p, false))}
           </div>
           <div style={{ display: "grid", placeItems: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</div>
-          <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0, textAlign: "right" }}>
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.5rem" }}>Team B</p>
+          <div style={{
+            background: m.winnerTeam === "B" ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
+            border: m.winnerTeam === "B" ? "1.5px solid var(--volt-500)" : "1.5px solid transparent",
+            borderRadius: "var(--r-lg)", padding: "0.875rem", minWidth: 0, textAlign: "right",
+          }}>
+            <p style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.375rem", fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: m.winnerTeam === "B" ? "var(--volt-600)" : "var(--text-3)", marginBottom: "0.5rem" }}>
+              {m.winnerTeam === "B" && "🏆"} Team B
+            </p>
             {m.teamB.map((p: any) => renderSwap(p, true))}
           </div>
         </div>
 
-        {canScore && !isLocked && session!.scoringMode === "points" ? (
-          <form onSubmit={(e) => submitScorePoints(m.id, e)} style={{ display: "grid", gridTemplateColumns: "80px auto 80px minmax(120px, auto)", gap: "0.5rem", alignItems: "center" }}>
-            <input data-testid="score-team-a-input" name="teamA" type="number" required defaultValue={m.scorePayload?.teamAScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
-            <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
-            <input data-testid="score-team-b-input" name="teamB" type="number" required defaultValue={m.scorePayload?.teamBScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
-            <button data-testid="save-score-btn" type="submit" style={primaryActionStyle}>Save Score</button>
-          </form>
-        ) : canScore && !isLocked ? (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-            <button data-testid="score-winner-a" onClick={() => submitScoreWinnerOnly(m.id, "A")} style={m.winnerTeam === "A" ? primaryActionStyle : secondaryActionStyle}>A Wins</button>
-            <button data-testid="score-winner-b" onClick={() => submitScoreWinnerOnly(m.id, "B")} style={m.winnerTeam === "B" ? primaryActionStyle : secondaryActionStyle}>B Wins</button>
-          </div>
-        ) : null}
-
-        {canScore && !isLocked && (
-          <button
-            data-testid="finish-game-btn"
-            onClick={() => handleFinishGame(m.id)}
-            style={{
-              display: "block",
-              margin: "0.5rem auto 0",
-              border: "none",
-              background: "transparent",
-              color: "var(--text-3)",
-              fontWeight: 700,
-              cursor: "pointer",
-              fontSize: "0.75rem",
-              textDecoration: "underline",
-            }}
-          >
-            Skip scoring, just finish
-          </button>
-        )}
+        {canScore && !isLocked && (() => {
+          const pts = pointInputs[m.id];
+          const a = pts?.a ? Number(pts.a) : undefined;
+          const b = pts?.b ? Number(pts.b) : undefined;
+          const hasValidPoints = typeof a === "number" && !Number.isNaN(a) && typeof b === "number" && !Number.isNaN(b) && a !== b;
+          return (
+            <div style={{ display: "grid", gap: "0.5rem" }}>
+              {session!.scoringMode === "points" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "0.5rem", alignItems: "center" }}>
+                  <input
+                    data-testid="score-team-a-input" type="number" placeholder="Points (optional)"
+                    value={pts?.a ?? ""}
+                    onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: e.target.value, b: prev[m.id]?.b ?? "" } }))}
+                    className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
+                  />
+                  <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
+                  <input
+                    data-testid="score-team-b-input" type="number" placeholder="Points (optional)"
+                    value={pts?.b ?? ""}
+                    onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: prev[m.id]?.a ?? "", b: e.target.value } }))}
+                    className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
+                  />
+                </div>
+              )}
+              {hasValidPoints ? (
+                <button data-testid="save-score-btn" onClick={() => submitWinner(m.id, a! > b! ? "A" : "B")} style={primaryActionStyle}>
+                  Save Score — {a! > b! ? "A" : "B"} Wins
+                </button>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                  <button data-testid="score-winner-a" onClick={() => submitWinner(m.id, "A")} style={primaryActionStyle}>A Wins</button>
+                  <button data-testid="score-winner-b" onClick={() => submitWinner(m.id, "B")} style={primaryActionStyle}>B Wins</button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -611,14 +633,10 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         gap: "1rem",
         alignItems: "start",
       }}>
-        {/* Court-centric live board: each court shows its current match, filled
-            automatically the instant it frees up — no round barrier. */}
+        {/* Round tiles: courts still advance independently (no barrier), but
+            matches are grouped by round for display — current round on top,
+            earlier rounds' results visible underneath. */}
         <section style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem" }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
-              Courts
-            </span>
-          </div>
           {matches.length === 0 && (
             <div style={{
               background: "var(--surface)",
@@ -633,34 +651,32 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               <p style={{ color: "var(--text-2)" }}>Generate schedule after enough players join.</p>
             </div>
           )}
-          {activeCourts.map((court) => {
-            const current = scheduledByCourtId.get(court.courtId);
-            if (current) return renderMatchCard(current);
+          {roundNumbersDesc.map((rn, idx) => {
+            const isCurrent = idx === 0;
             return (
-              <div key={court.courtId} data-testid="court-empty" style={{
-                background: "var(--surface)",
-                border: "2px dashed var(--border)",
-                borderRadius: "var(--r-xl)",
-                padding: "1.25rem",
-                marginBottom: "0.875rem",
-                textAlign: "center",
-              }}>
-                <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
-                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
+              <div key={rn} style={{ marginBottom: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: isCurrent ? "var(--text-1)" : "var(--text-3)", fontWeight: isCurrent ? 900 : 400 }}>
+                    Round {rn}{isCurrent ? " · Current" : ""}
+                  </span>
+                </div>
+                {matchesByRound.get(rn)!.map((m) => renderMatchCard(m))}
+                {isCurrent && emptyCourts.map((court) => (
+                  <div key={court.courtId} data-testid="court-empty" style={{
+                    background: "var(--surface)",
+                    border: "2px dashed var(--border)",
+                    borderRadius: "var(--r-xl)",
+                    padding: "1.25rem",
+                    marginBottom: "0.875rem",
+                    textAlign: "center",
+                  }}>
+                    <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
+                    <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
+                  </div>
+                ))}
               </div>
             );
           })}
-
-          {historyMatches.length > 0 && (
-            <div style={{ marginTop: "1.5rem" }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
-                History
-              </span>
-              <div style={{ marginTop: "0.625rem" }}>
-                {historyMatches.map((m) => renderMatchCard(m))}
-              </div>
-            </div>
-          )}
         </section>
 
         {/* Leaderboard */}
@@ -683,7 +699,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             </div>
           ) : (
             <div style={{ display: "grid", gap: "0.5rem" }}>
-              {leaderboard.map((row, idx) => (
+              {leaderboard.map((row, idx) => {
+                const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                return (
                 <div key={row.playerId} style={{
                   display: "grid",
                   gridTemplateColumns: "auto minmax(0, 1fr) repeat(3, auto)",
@@ -693,8 +711,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   borderRadius: "var(--r-lg)",
                   background: idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
                 }}>
-                  <span style={{ width: 26, height: 26, borderRadius: "50%", background: idx === 0 ? "var(--volt-500)" : "var(--surface)", display: "grid", placeItems: "center", fontWeight: 900 }}>
-                    {idx + 1}
+                  <span style={{ width: 26, height: 26, borderRadius: "50%", background: medal ? "transparent" : "var(--surface)", display: "grid", placeItems: "center", fontWeight: 900, fontSize: medal ? "1.125rem" : undefined }}>
+                    {medal ?? idx + 1}
                   </span>
                   <span style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {row.displayName ?? displayNameById.get(row.playerId) ?? row.playerId}
@@ -703,7 +721,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>L {row.losses}</span>
                   <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>{session.scoringMode === "points" ? `PD ${row.pointDifference}` : `GP ${row.gamesPlayed}`}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </aside>

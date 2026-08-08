@@ -91,23 +91,23 @@ export function buildSitOutDocs(sitOuts: GeneratedSitOut[]) {
   return sitOuts;
 }
 
+/**
+ * Points are always optional — a match can be finished with just a winner
+ * tap, regardless of the session's scoring mode. If points are given, they
+ * must be numeric and not tied; otherwise an explicit winner is required.
+ */
 export function validatePayload(
   payload: unknown,
-  mode: ScoringMode,
+  _mode: ScoringMode,
 ): { ok: true } | { ok: false; message: string } {
   if (!payload || typeof payload !== "object") return { ok: false, message: "payload must be an object" };
   const p = payload as Record<string, unknown>;
-  if (mode === "points") {
-    if (typeof p.teamAScore !== "number" || typeof p.teamBScore !== "number") {
-      return { ok: false, message: "points mode requires numeric teamAScore and teamBScore" };
-    }
+  if (typeof p.teamAScore === "number" && typeof p.teamBScore === "number") {
     if (p.teamAScore === p.teamBScore) return { ok: false, message: "Tied scores are not allowed" };
     return { ok: true };
   }
-  if (p.winnerTeam !== "A" && p.winnerTeam !== "B") {
-    return { ok: false, message: "winner_only mode requires winnerTeam of 'A' or 'B'" };
-  }
-  return { ok: true };
+  if (p.winnerTeam === "A" || p.winnerTeam === "B") return { ok: true };
+  return { ok: false, message: "Pick a winner, or enter both scores" };
 }
 
 // ── Continuous per-court auto-fill ──────────────────────────────────────────

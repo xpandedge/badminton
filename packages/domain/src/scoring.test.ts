@@ -1,14 +1,18 @@
 import { describe, it, expect } from "vitest";
 import { deriveWinner, leaderboardCompare } from "./scoring.js";
 
-describe("deriveWinner (DELTA_SPEC D1)", () => {
-  it("points mode: higher score wins, ties rejected", () => {
+describe("deriveWinner — points are always optional, a winner is always required", () => {
+  it("derives from points when given, regardless of mode; ties rejected", () => {
     expect(deriveWinner({ teamAScore: 21, teamBScore: 18 }, "points")).toBe("A");
+    expect(deriveWinner({ teamAScore: 21, teamBScore: 18 }, "winner_only")).toBe("A");
     expect(() => deriveWinner({ teamAScore: 21, teamBScore: 21 }, "points")).toThrow();
   });
-  it("winner_only mode: takes winnerTeam, rejects stray scores", () => {
+  it("falls back to an explicit winner pick when no points are given, regardless of mode", () => {
     expect(deriveWinner({ winnerTeam: "B" }, "winner_only")).toBe("B");
-    expect(() => deriveWinner({ teamAScore: 21, teamBScore: 18 } as any, "winner_only")).toThrow();
+    expect(deriveWinner({ winnerTeam: "B" }, "points")).toBe("B");
+  });
+  it("throws when the payload has neither points nor a winner", () => {
+    expect(() => deriveWinner({} as any, "points")).toThrow();
   });
 });
 

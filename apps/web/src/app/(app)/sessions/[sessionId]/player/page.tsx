@@ -93,7 +93,7 @@ export default function PlayerSelfViewPage({ params }: { params: Promise<{ sessi
               return (
                 <div key={m.id} className="p-3 border rounded flex justify-between items-center">
                   <div>{m.courtName ?? `Court ${m.courtId}`}</div>
-                  {session.scoringMode === "points" && m.scorePayload && (
+                  {typeof m.scorePayload?.teamAScore === "number" && (
                     <div className="font-mono">{m.scorePayload.teamAScore} - {m.scorePayload.teamBScore}</div>
                   )}
                   <div className={`font-bold ${didWin ? "text-green-600" : "text-red-600"}`}>

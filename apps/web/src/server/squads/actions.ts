@@ -8,6 +8,55 @@ import { ok, err, type ActionResult } from "@/server/result";
 
 type AddableMemberRole = "member" | "organiser";
 
+// ── shared creation helper ──────────────────────────────────────────────────
+
+async function createSquadForUser(
+  uid: string,
+  name: string,
+  description: string | null,
+): Promise<{ squadId: string }> {
+  const db = getAdminDb();
+  const auth = getAdminAuth();
+  const groupRef = db.collection("groups").doc();
+
+  // Fetch owner's profile so we can populate the player doc
+  const ownerRecord = await auth.getUser(uid).catch(() => null);
+  const ownerDisplayName =
+    ownerRecord?.displayName?.trim() ||
+    ownerRecord?.email?.split("@")[0] ||
+    "Owner";
+
+  await db.runTransaction(async (t) => {
+    t.set(groupRef, {
+      name: name.trim(),
+      description,
+      createdBy: uid,
+      memberIds: [uid],
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    t.set(groupRef.collection("members").doc(uid), {
+      userId: uid,
+      displayName: ownerDisplayName,
+      email: ownerRecord?.email ?? null,
+      role: "owner",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    t.set(groupRef.collection("players").doc(uid), {
+      userId: uid,
+      displayName: ownerDisplayName,
+      email: ownerRecord?.email ?? null,
+      skillLevel: "unknown",
+      isGuest: false,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return { squadId: groupRef.id };
+}
+
 // ── createSquad ───────────────────────────────────────────────────────────────
 
 export interface CreateSquadInput {
@@ -26,46 +75,38 @@ export async function createSquad(
     return err("INVALID_ARGUMENT", "Squad name must be at least 2 characters");
   }
 
-  const db = getAdminDb();
-  const auth = getAdminAuth();
-  const groupRef = db.collection("groups").doc();
+  const result = await createSquadForUser(session.uid, name, description);
+  return ok(result);
+}
 
-  // Fetch owner's profile so we can populate the player doc
+// ── getOrCreateDefaultSquad ─────────────────────────────────────────────────
+// Lets a brand-new user reach session creation with zero setup: returns their
+// first squad if they have one, otherwise silently creates a personal one.
+
+export async function getOrCreateDefaultSquad(): Promise<ActionResult<{ squadId: string }>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+  const existing = await db
+    .collection("groups")
+    .where("memberIds", "array-contains", session.uid)
+    .limit(1)
+    .get();
+
+  if (!existing.empty) {
+    return ok({ squadId: existing.docs[0]!.id });
+  }
+
+  const auth = getAdminAuth();
   const ownerRecord = await auth.getUser(session.uid).catch(() => null);
   const ownerDisplayName =
     ownerRecord?.displayName?.trim() ||
     ownerRecord?.email?.split("@")[0] ||
-    "Owner";
+    "My";
 
-  await db.runTransaction(async (t) => {
-    t.set(groupRef, {
-      name: name.trim(),
-      description,
-      createdBy: session.uid,
-      memberIds: [session.uid],
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    t.set(groupRef.collection("members").doc(session.uid), {
-      userId: session.uid,
-      displayName: ownerDisplayName,
-      email: ownerRecord?.email ?? null,
-      role: "owner",
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    t.set(groupRef.collection("players").doc(session.uid), {
-      userId: session.uid,
-      displayName: ownerDisplayName,
-      email: ownerRecord?.email ?? null,
-      skillLevel: "unknown",
-      isGuest: false,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-  });
-
-  return ok({ squadId: groupRef.id });
+  const result = await createSquadForUser(session.uid, `${ownerDisplayName}'s Squad`, null);
+  return ok(result);
 }
 
 // ── addMemberToSquad ──────────────────────────────────────────────────────────

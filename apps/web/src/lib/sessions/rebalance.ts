@@ -1,10 +1,16 @@
 import { getFirebaseServices } from "@/lib/firebase/client";
-import { httpsCallable } from "firebase/functions";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { logEvent } from "@/lib/analytics/events";
 import { safeUnsubscribe } from "@/lib/realtime/watchWithFallback";
 import { rebalanceSession as serverRebalance } from "@/server/sessions/rebalance";
-import { updatePlayerStatus as serverUpdateStatus, addLatePlayer as serverAddLate, markPlayerInjured as serverMarkInjured } from "@/server/sessions/players";
+import {
+  updatePlayerStatus as serverUpdateStatus,
+  addLatePlayer as serverAddLate,
+  markPlayerInjured as serverMarkInjured,
+  swapPlayers as serverSwapPlayers,
+  moveMatch as serverMoveMatch,
+  disableCourt as serverDisableCourt,
+} from "@/server/sessions/players";
 
 export async function rebalanceSession(data: { sessionId: string; trigger?: string }) {
   const result = await serverRebalance(
@@ -35,28 +41,22 @@ export async function markPlayerInjured(data: { sessionId: string; sessionPlayer
   return { data: result.data };
 }
 
-export function swapPlayers(data: { sessionId: string; matchId: string; roundNumber: number; outPlayerId: string; inPlayerId: string }) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable<
-    { sessionId: string; matchId: string; roundNumber: number; outPlayerId: string; inPlayerId: string },
-    { success: boolean }
-  >(functions, "swapPlayers")(data);
+export async function swapPlayers(data: { sessionId: string; matchId: string; roundNumber: number; outPlayerId: string; inPlayerId: string }) {
+  const result = await serverSwapPlayers(data.sessionId, data.matchId, data.roundNumber, data.outPlayerId, data.inPlayerId);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
 }
 
-export function moveMatch(data: { sessionId: string; matchId: string; roundNumber: number; courtId: string }) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable<
-    { sessionId: string; matchId: string; roundNumber: number; courtId: string },
-    { success: boolean }
-  >(functions, "moveMatch")(data);
+export async function moveMatch(data: { sessionId: string; matchId: string; roundNumber: number; courtId: string }) {
+  const result = await serverMoveMatch(data.sessionId, data.matchId, data.roundNumber, data.courtId);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
 }
 
-export function disableCourt(data: { sessionId: string; courtId: string }) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable<
-    { sessionId: string; courtId: string },
-    { success: boolean; rebalanceRecommended: boolean }
-  >(functions, "disableCourt")(data);
+export async function disableCourt(data: { sessionId: string; courtId: string }) {
+  const result = await serverDisableCourt(data.sessionId, data.courtId);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
 }
 
 export function watchGenerationRuns(

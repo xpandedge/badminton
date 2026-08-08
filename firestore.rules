@@ -38,11 +38,6 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if (signedIn() && request.auth.uid == userId) || isSuperAdmin();
       allow write: if signedIn() && request.auth.uid == userId;
-
-      // Per-user player roster for Quick Session cross-session fairness.
-      match /players/{playerId} {
-        allow read, write: if signedIn() && request.auth.uid == userId;
-      }
     }
 
     // Global player identity + stats — written only by the server tier (D8).
@@ -179,13 +174,6 @@ service cloud.firestore {
         allow read: if isSessionGroupMember() || isSessionPlayer();
         allow write: if false; // Server tier only
       }
-    }
-
-    // Quick Sessions — auth-gated, owner-scoped.
-    match /quickSessions/{sessionId} {
-      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow read, update: if signedIn() && resource.data.ownerUid == request.auth.uid;
-      allow delete: if false;
     }
 
     match /{document=**} {

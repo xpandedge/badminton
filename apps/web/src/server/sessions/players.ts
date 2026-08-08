@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { canManageSessionPlayers, isSkillLevel, type SessionPlayerStatus } from "@picklebaddies/domain";
+import { canManageSessionPlayers, isSchedulable, isSkillLevel, type SessionPlayerStatus } from "@picklebaddies/domain";
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
@@ -318,6 +318,199 @@ export async function markPlayerInjured(
   } catch (e: any) {
     if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
     if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    throw e;
+  }
+}
+
+/** PRD §12.10: swap two players in a future (scheduled, not locked) match. */
+export async function swapPlayers(
+  sessionId: string,
+  matchId: string,
+  roundNumber: number,
+  outPlayerId: string,
+  inPlayerId: string,
+): Promise<ActionResult<void>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  if (outPlayerId === inPlayerId) {
+    return err("INVALID_ARGUMENT", "outPlayerId and inPlayerId must differ");
+  }
+
+  const db = getAdminDb();
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canManageSessionPlayers(role)) {
+        throw Object.assign(new Error("Must be a squad member to swap players"), { code: "FORBIDDEN" });
+      }
+
+      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
+      const matchSnap = await t.get(matchRef);
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
+      const match = matchSnap.data()!;
+
+      if (match.status !== "scheduled" || match.isLocked) {
+        throw Object.assign(new Error("Can only swap players in future scheduled matches"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const inPlayerRef = db.doc(`sessions/${sessionId}/players/${inPlayerId}`);
+      const inPlayerSnap = await t.get(inPlayerRef);
+      if (!inPlayerSnap.exists) throw Object.assign(new Error("Replacement player not found"), { code: "NOT_FOUND" });
+      const inPlayer = inPlayerSnap.data()!;
+
+      if (!isSchedulable(inPlayer.status)) {
+        throw Object.assign(new Error("Replacement player is not available to play"), { code: "FAILED_PRECONDITION" });
+      }
+      const currentIds: string[] = [
+        ...(match.teamAIds || match.teamA.map((p: any) => p.playerId)),
+        ...(match.teamBIds || match.teamB.map((p: any) => p.playerId)),
+      ];
+      if (!currentIds.includes(outPlayerId)) {
+        throw Object.assign(new Error("Outgoing player is not in this match"), { code: "FAILED_PRECONDITION" });
+      }
+      if (currentIds.includes(inPlayerId)) {
+        throw Object.assign(new Error("Replacement player is already in this match"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const swap = (p: { playerId: string; displayName: string }) =>
+        p.playerId === outPlayerId ? { playerId: inPlayerId, displayName: inPlayer.displayName } : p;
+      const newTeamA = (match.teamA as Array<{ playerId: string; displayName: string }>).map(swap);
+      const newTeamB = (match.teamB as Array<{ playerId: string; displayName: string }>).map(swap);
+
+      t.update(matchRef, {
+        teamA: newTeamA,
+        teamB: newTeamB,
+        teamAIds: newTeamA.map((p) => p.playerId),
+        teamBIds: newTeamB.map((p) => p.playerId),
+      });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "match/updated",
+        details: { matchId, roundNumber, outPlayerId, inPlayerId, action: "swap" },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return ok(undefined);
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
+    if (e.code === "INVALID_ARGUMENT") return err("INVALID_ARGUMENT", e.message);
+    throw e;
+  }
+}
+
+/** PRD §12.10: reassign a future match to a different court. */
+export async function moveMatch(
+  sessionId: string,
+  matchId: string,
+  roundNumber: number,
+  courtId: string,
+): Promise<ActionResult<void>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canManageSessionPlayers(role)) {
+        throw Object.assign(new Error("Must be a squad member to move matches"), { code: "FORBIDDEN" });
+      }
+
+      const court = (session.courts || []).find((c: any) => (c.courtId || c.id) === courtId && c.isActive);
+      if (!court) {
+        throw Object.assign(new Error("Target court not found or inactive"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
+      const matchSnap = await t.get(matchRef);
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
+      const match = matchSnap.data()!;
+
+      if (match.status !== "scheduled" || match.isLocked) {
+        throw Object.assign(new Error("Can only move future scheduled matches"), { code: "FAILED_PRECONDITION" });
+      }
+
+      t.update(matchRef, { courtId, courtName: court.name });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "match/updated",
+        details: { matchId, roundNumber, courtId, action: "move" },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return ok(undefined);
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
+    throw e;
+  }
+}
+
+/** DELTA_SPEC D2: disable a court for future scheduling. */
+export async function disableCourt(
+  sessionId: string,
+  courtId: string,
+): Promise<ActionResult<{ rebalanceRecommended: boolean }>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canManageSessionPlayers(role)) {
+        throw Object.assign(new Error("Must be a squad member to disable courts"), { code: "FORBIDDEN" });
+      }
+
+      const courts = (session.courts || []) as Array<any>;
+      const courtIdx = courts.findIndex((c: any) => (c.courtId || c.id) === courtId);
+      if (courtIdx === -1) throw Object.assign(new Error("Court not found in session"), { code: "NOT_FOUND" });
+
+      const updatedCourts = courts.map((c: any, i: number) => (i === courtIdx ? { ...c, isActive: false } : c));
+      t.update(sessionRef, { courts: updatedCourts });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "court/disabled",
+        details: { courtId },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    return ok({ rebalanceRecommended: true });
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
     throw e;
   }
 }

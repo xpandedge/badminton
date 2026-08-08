@@ -158,14 +158,14 @@ export default function Home() {
         </Link>
 
         <Link
-          href="/quick"
+          href="/sign-in?redirect=/sessions/new"
           style={{ textDecoration: "none", animation: "pb-rise 500ms 120ms var(--ease-out) both", display: "block" }}
         >
           <button
             className="pb-btn"
             style={{ height: 52, fontSize: "0.9375rem", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(246,248,244,0.8)" }}
           >
-            ⚡ Quick Session
+            ⚡ Start playing
           </button>
         </Link>
 

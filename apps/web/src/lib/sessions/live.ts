@@ -1,54 +1,51 @@
 import { getFirebaseServices } from "@/lib/firebase/client";
-import { httpsCallable } from "firebase/functions";
 import { collection, query, onSnapshot, orderBy, getDocs } from "firebase/firestore";
 import { leaderboardCompare, ScoringMode, LeaderboardRow } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { watchWithFallback } from "@/lib/realtime/watchWithFallback";
+import { generateSchedule as serverGenerateSchedule } from "@/server/sessions/generate";
+import { updateSessionStatus, advanceRound as serverAdvanceRound } from "@/server/sessions/actions";
 
 export async function generateSchedule(data: { sessionId: string }) {
-  const { functions } = getFirebaseServices();
-  const result = await httpsCallable(functions, "generateSchedule")(data);
+  const result = await serverGenerateSchedule(data.sessionId);
+  if (!result.ok) throw new Error(result.message);
   void logEvent("schedule_generated", { sessionId: data.sessionId });
-  return result;
+  return { data: result.data };
 }
 
 export async function startSession(data: { sessionId: string }) {
-  const { functions } = getFirebaseServices();
-  const result = await httpsCallable(functions, "startSession")(data);
+  const result = await updateSessionStatus(data.sessionId, "active");
+  if (!result.ok) throw new Error(result.message);
   void logEvent("session_started", { sessionId: data.sessionId });
-  return result;
+  return { data: result.data };
 }
 
 export async function advanceRound(data: { sessionId: string; force?: boolean }) {
-  const { functions } = getFirebaseServices();
-  const result = await httpsCallable(functions, "advanceRound")(data);
-  const res = result.data as any;
-  if (!res?.needsConfirmation) {
+  const result = await serverAdvanceRound(data.sessionId, data.force);
+  if (!result.ok) throw new Error(result.message);
+  if (!result.data.needsConfirmation) {
     void logEvent("round_advanced", { sessionId: data.sessionId });
   }
-  return result;
+  return { data: result.data };
 }
 
 export async function completeSession(data: { sessionId: string }) {
-  const { functions } = getFirebaseServices();
-  const result = await httpsCallable(functions, "completeSession")(data);
+  const result = await updateSessionStatus(data.sessionId, "completed");
+  if (!result.ok) throw new Error(result.message);
   void logEvent("session_completed", { sessionId: data.sessionId });
-  return result;
+  return { data: result.data };
 }
 
-export function pauseSession(data: { sessionId: string }) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable(functions, "pauseSession")(data);
+export async function pauseSession(data: { sessionId: string }) {
+  const result = await updateSessionStatus(data.sessionId, "paused");
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
 }
 
-export function resumeSession(data: { sessionId: string }) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable(functions, "resumeSession")(data);
-}
-
-export function submitScore(data: unknown) {
-  const { functions } = getFirebaseServices();
-  return httpsCallable(functions, "submitScore")(data);
+export async function resumeSession(data: { sessionId: string }) {
+  const result = await updateSessionStatus(data.sessionId, "active");
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
 }
 
 export function watchRounds(sessionId: string, callback: (rounds: any[]) => void) {

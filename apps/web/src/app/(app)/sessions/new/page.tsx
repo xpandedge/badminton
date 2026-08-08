@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSession } from "@/server/sessions/actions";
+import { getOrCreateDefaultSquad } from "@/server/squads/actions";
 import { getSportConfig } from "@picklebaddies/domain";
 import { watchUserGroups } from "@/lib/groups/groups";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -82,6 +83,9 @@ export default function NewSessionPage() {
 
   const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [groupId, setGroupId] = useState("");
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [provisioningSquad, setProvisioningSquad] = useState(false);
+  const hasAutoProvisioned = useRef(false);
   const [venueName, setVenueName] = useState("");
   const [courtsText, setCourtsText] = useState("Court 1\nCourt 2");
 
@@ -106,8 +110,25 @@ export default function NewSessionPage() {
 
   useEffect(() => {
     if (!user) return;
-    return watchUserGroups(user.uid, setGroups, () => setGroups([]));
+    return watchUserGroups(
+      user.uid,
+      (gs) => { setGroups(gs); setGroupsLoaded(true); },
+      () => { setGroups([]); setGroupsLoaded(true); },
+    );
   }, [user]);
+
+  // First-time users have no squad yet — provision one silently so they can
+  // start a session with zero setup, same as everyone who already has one.
+  useEffect(() => {
+    if (!groupsLoaded || groups.length > 0 || hasAutoProvisioned.current) return;
+    hasAutoProvisioned.current = true;
+    setProvisioningSquad(true);
+    getOrCreateDefaultSquad()
+      .then((result) => {
+        if (result?.ok) setGroupId(result.data.squadId);
+      })
+      .finally(() => setProvisioningSquad(false));
+  }, [groupsLoaded, groups]);
 
   const courtNames = courtsText
     .split(/[\n,]+/)
@@ -228,10 +249,16 @@ export default function NewSessionPage() {
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Group</span>
-            <select data-testid="session-group-select" className="pb-input" value={groupId} onChange={e => setGroupId(e.target.value)} required>
-              <option value="">Select a group…</option>
-              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
+            {provisioningSquad ? (
+              <div className="pb-input" style={{ color: "var(--text-3)", display: "flex", alignItems: "center" }}>
+                Setting up your squad…
+              </div>
+            ) : (
+              <select data-testid="session-group-select" className="pb-input" value={groupId} onChange={e => setGroupId(e.target.value)} required>
+                <option value="">Select a group…</option>
+                {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            )}
           </label>
 
           <label style={{ display: "grid", gap: "0.4rem" }}>

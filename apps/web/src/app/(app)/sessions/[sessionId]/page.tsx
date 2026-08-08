@@ -8,6 +8,9 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { canManageSessionPlayers } from "@picklebaddies/domain";
 import { addGroupMemberToSession } from "@/server/sessions/players";
+import { addCourtToSession } from "@/server/sessions/actions";
+import { formatSessionStatus, formatPlayerStatus, formatScoringMode } from "@/lib/format/status";
+import { QRCode } from "@/components/QRCode";
 
 function titleCase(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -28,15 +31,24 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [addingId, setAddingId] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
 
+  // Add court state
+  const [addCourtName, setAddCourtName] = useState("");
+  const [addCourtLoading, setAddCourtLoading] = useState(false);
+  const [addCourtError, setAddCourtError] = useState<string | null>(null);
+
   const { user: currentUser } = useAuth();
   const role = useGroupRole(session?.groupId ?? null);
   const canManage = canManageSessionPlayers(role);
   const isGroupMember = role !== null;
 
   const activePlayers = players.filter((p) => p.status !== "removed" && p.status !== "left");
+  // Match by both playerId (uid) and also by the group player doc ID for cases where they differ
   const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
   const currentUserInSession = currentUser ? activePlayerIds.has(currentUser.uid) : false;
-  const rosterNotInSession = groupPlayers.filter((gp) => !activePlayerIds.has(gp.id));
+  // Exclude group members who are already active — match by doc ID OR by userId field
+  const rosterNotInSession = groupPlayers.filter(
+    (gp) => !activePlayerIds.has(gp.id) && !activePlayerIds.has(gp.userId ?? "__none__")
+  );
 
   useEffect(() => {
     const unsubSession = watchSession(sessionId, (s) => setSession(s));
@@ -73,6 +85,55 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const handleToggleScoreLink = async () => {
     if (!session) return;
     await updateSessionDraft(sessionId, { scoreLinkEnabled: !session.scoreLinkEnabled });
+  };
+
+  const boardEnabled = session?.boardEnabled !== false;
+  const boardPath = session?.scoreCode ? `/board/${session.scoreCode}` : null;
+  const boardUrl = boardPath && typeof window !== "undefined" ? `${window.location.origin}${boardPath}` : boardPath ?? "";
+  const [boardCopied, setBoardCopied] = useState(false);
+
+  const handleCopyBoardLink = async () => {
+    if (!boardPath) return;
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    await navigator.clipboard?.writeText(`${origin}${boardPath}`);
+    setBoardCopied(true);
+    setTimeout(() => setBoardCopied(false), 1600);
+  };
+
+  const handleShareBoardLink = async () => {
+    if (!boardUrl) return;
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({
+          title: session?.name ? `${session.name} — player board` : "Player board",
+          text: "See your matches:",
+          url: boardUrl,
+        });
+        return;
+      } catch {
+        /* user cancelled or unsupported — fall through to copy */
+      }
+    }
+    await handleCopyBoardLink();
+  };
+
+  const handleToggleBoard = async () => {
+    if (!session) return;
+    await updateSessionDraft(sessionId, { boardEnabled: !boardEnabled });
+  };
+
+  const handleAddCourt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addCourtName.trim() || addCourtLoading) return;
+    setAddCourtLoading(true);
+    setAddCourtError(null);
+    const res = await addCourtToSession(sessionId, addCourtName.trim()).catch((err) => ({ ok: false as const, message: err.message }));
+    setAddCourtLoading(false);
+    if (res && !res.ok) {
+      setAddCourtError(res.message || "Failed to add court");
+    } else {
+      setAddCourtName("");
+    }
   };
 
   if (!session) {
@@ -149,7 +210,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                 textTransform: "uppercase",
                 marginBottom: "0.875rem",
               }}>
-                {titleCase(session.status)}
+                {formatSessionStatus(session.status)}
               </span>
               <h1 style={{
                 fontFamily: "var(--font-display)",
@@ -223,8 +284,8 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
             {[
               { label: "Players", value: registeredCount },
               { label: "Courts", value: activeCourts.length || session.courtCount },
-              { label: "Rounds", value: roundEstimate },
-              { label: "Scoring", value: titleCase(session.scoringMode) },
+              { label: "Duration", value: `${session.durationMinutes} min` },
+              { label: "Scoring", value: formatScoringMode(session.scoringMode) },
             ].map((stat) => (
               <div key={stat.label} style={{
                 background: "rgba(246,248,244,0.08)",
@@ -260,6 +321,66 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
         gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
         gap: "1rem",
       }}>
+        {canManage && boardPath && (
+          <div style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-xl)",
+            padding: "1rem",
+            boxShadow: "var(--shadow-sm)",
+            animation: "pb-rise 400ms 80ms var(--ease-out) both",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.875rem" }}>
+              <div style={{ width: 40, height: 40, borderRadius: "var(--r-lg)", background: "var(--volt-500)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink-800)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <path d="M14 14h3v3M20 20h.01M17 20h.01M20 17h.01" />
+                </svg>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
+                  Player Board
+                </h2>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Players see their matches — no sign-in.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleBoard}
+                aria-label={boardEnabled ? "Disable player board" : "Enable player board"}
+                style={{ width: 44, height: 26, borderRadius: "var(--r-pill)", background: boardEnabled ? "var(--volt-500)" : "var(--n-300)", border: "none", cursor: "pointer", position: "relative", flexShrink: 0, transition: "background 150ms" }}
+              >
+                <span style={{ position: "absolute", top: 3, left: boardEnabled ? 20 : 3, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 150ms" }} />
+              </button>
+            </div>
+
+            {boardEnabled ? (
+              <div style={{ display: "flex", gap: "0.875rem", alignItems: "center" }}>
+                <div style={{ flexShrink: 0, background: "#fff", padding: 8, borderRadius: "var(--r-md)", border: "1px solid var(--border)" }}>
+                  <QRCode value={boardUrl} size={112} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.3rem" }}>Scan or share</div>
+                  <a href={boardPath} style={{ display: "block", color: "var(--emerald-600)", fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {boardUrl}
+                  </a>
+                  <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.6rem" }}>
+                    <button type="button" onClick={handleShareBoardLink} style={{ flex: 1, height: 38, border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, fontSize: "0.8125rem", cursor: "pointer" }}>
+                      Share
+                    </button>
+                    <button type="button" onClick={handleCopyBoardLink} aria-label="Copy board link" style={{ width: 42, height: 38, border: "none", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--ink-800)", fontWeight: 900, fontSize: "0.75rem", cursor: "pointer" }}>
+                      {boardCopied ? "✓" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>The board is off. Turn it on to share a live see-your-matches link.</p>
+            )}
+          </div>
+        )}
+
         {canManage && (
           <div style={{
             background: "var(--surface)",
@@ -344,7 +465,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
           <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.875rem" }}>
             Courts
           </h2>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: canManage ? "0.875rem" : 0 }}>
             {activeCourts.map((court) => (
               <span key={court.courtId} style={{
                 padding: "0.5rem 0.75rem",
@@ -360,6 +481,35 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
             ))}
             {activeCourts.length === 0 && <span style={{ color: "var(--text-3)" }}>No active courts.</span>}
           </div>
+          {canManage && session.status !== "completed" && session.status !== "cancelled" && (
+            <form onSubmit={handleAddCourt} style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <input
+                className="pb-input"
+                type="text"
+                placeholder={`Court ${activeCourts.length + 1} name…`}
+                value={addCourtName}
+                onChange={(e) => setAddCourtName(e.target.value)}
+                style={{ flex: 1, height: 38, borderRadius: "var(--r-md)", fontSize: "0.875rem" }}
+              />
+              <button
+                type="submit"
+                disabled={!addCourtName.trim() || addCourtLoading}
+                style={{
+                  height: 38, padding: "0 0.875rem", border: "none",
+                  borderRadius: "var(--r-md)", background: "var(--ink-800)",
+                  color: "var(--volt-500)", fontWeight: 900, fontSize: "0.8125rem",
+                  opacity: !addCourtName.trim() || addCourtLoading ? 0.5 : 1,
+                  cursor: !addCourtName.trim() || addCourtLoading ? "default" : "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {addCourtLoading ? "Adding…" : "+ Add Court"}
+              </button>
+            </form>
+          )}
+          {addCourtError && (
+            <p style={{ color: "var(--danger)", fontSize: "0.8125rem", marginTop: "0.5rem", fontWeight: 700 }}>{addCourtError}</p>
+          )}
         </div>
       </section>
 
@@ -468,10 +618,10 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", marginBottom: "0.875rem" }}>
               <div>
                 <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                  Team Roster
+                  Not joined yet
                 </h2>
                 <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>
-                  {canManage ? "Add team members to this session." : "Members who haven't joined yet."}
+                  {canManage ? "Tap Add to include them in this session." : "Squad members who haven't joined this session."}
                 </p>
               </div>
               <span style={{
@@ -514,7 +664,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                 color: "var(--text-2)",
                 textAlign: "center",
               }}>
-                All team members are already in this session.
+                Everyone's in — all squad members have joined! 🎉
               </div>
             ) : (
               <div style={{ display: "grid", gap: "0.5rem" }}>

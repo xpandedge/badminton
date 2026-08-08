@@ -6,6 +6,7 @@ import { isSuperAdminEmail } from "@picklebaddies/domain";
 import { useAuth } from "@/lib/auth/useAuth";
 import { watchUserGroups } from "@/lib/groups/groups";
 import { getMySessionsAction, type SessionSummaryData } from "@/server/sessions/actions";
+import { formatSessionStatus } from "@/lib/format/status";
 
 type Group = { id: string; name: string };
 
@@ -15,6 +16,11 @@ export default function DashboardPage() {
   const [groupsLoaded, setGroupsLoaded] = useState(false);
   const [mySessions, setMySessions] = useState<{ organising: SessionSummaryData[]; playing: SessionSummaryData[] } | null>(null);
   const [sessionsTab, setSessionsTab] = useState<"organising" | "playing">("organising");
+
+  const SESSION_TAB_LABELS: Record<"organising" | "playing", string> = {
+    organising: "My Sessions",
+    playing: "Joined",
+  };
 
   const displayName = user?.displayName ?? user?.email ?? "Baddie";
   const firstName = displayName.split(/[\s@]/)[0];
@@ -355,7 +361,7 @@ export default function DashboardPage() {
                   boxShadow: "var(--shadow-sm)",
                 }}
               >
-                {tab}
+                {SESSION_TAB_LABELS[tab]}
               </button>
             ))}
           </div>
@@ -407,7 +413,7 @@ export default function DashboardPage() {
                     }}
                   >
                     <span style={{ padding: "2px 7px", borderRadius: "var(--r-pill)", background: statusTone.bg, color: statusTone.fg, fontFamily: "var(--font-mono)", fontSize: "0.5625rem", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>
-                      {s.status}
+                      {formatSessionStatus(s.status)}
                     </span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-1)" }}>{s.name}</div>

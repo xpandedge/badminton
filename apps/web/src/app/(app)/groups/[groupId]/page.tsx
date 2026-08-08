@@ -9,8 +9,11 @@ import { addVenue, addCourt, watchCourts, watchVenues } from "@/lib/groups/venue
 import { type GroupRole } from "@picklebaddies/domain";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
-import { addMemberToSquad, addGuestPlayerToSquad, approveJoinRequest, rejectJoinRequest, rotateInviteCode } from "@/server/squads/actions";
+import { rsvpToSession, deleteSession, getGroupSessionsAction } from "@/server/sessions/actions";
+import { addMemberToSquad, addGuestPlayerToSquad, approveJoinRequest, rejectJoinRequest, rotateInviteCode, removePlayerFromSquad } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { getApp } from "firebase/app";
 
 type VenueRow = { id: string; name: string };
 type CourtRow = { id: string; name?: string; courtNumber?: number; isActive?: boolean };
@@ -60,7 +63,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
   const { user } = useAuth();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [sessionFilter, setSessionFilter] = useState<"upcoming" | "active" | "past">("active");
+  const [sessionFilter, setSessionFilter] = useState<"all" | "upcoming" | "active" | "past">("upcoming");
   const [activeTab, setActiveTab] = useState<"members" | "sessions">("members");
 
   // Self-join: invite code + incoming requests
@@ -69,6 +72,11 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [copiedCode, setCopiedCode] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [resolvingReq, setResolvingReq] = useState<string | null>(null);
+
+  // RSVP tracking: map of sessionId → current user's status
+  const [rsvpStatus, setRsvpStatus] = useState<Record<string, "going" | "not_going" | null>>({});
+  const [rsvpLoading, setRsvpLoading] = useState<Set<string>>(new Set());
+  const [rsvpToast, setRsvpToast] = useState<Record<string, string>>({});
 
   const handleCopyCode = async () => {
     if (!inviteCode) return;
@@ -92,6 +100,35 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     await rejectJoinRequest(groupId, uid).catch(() => null);
     setResolvingReq(null);
   };
+  const handleRemovePlayer = async (targetId: string, name: string) => {
+    if (!confirm(`Remove ${name} from this squad?`)) return;
+    await removePlayerFromSquad(groupId, targetId).catch((e) => alert(e.message));
+  };
+  const handleRsvp = async (sessionId: string, status: "going" | "not_going") => {
+    // Prevent double-click
+    if (rsvpLoading.has(sessionId)) return;
+    // Optimistic update
+    const prev = rsvpStatus[sessionId] ?? null;
+    setRsvpStatus((s) => ({ ...s, [sessionId]: status }));
+    setRsvpLoading((s) => { const n = new Set(s); n.add(sessionId); return n; });
+    setRsvpToast((t) => ({ ...t, [sessionId]: "" }));
+
+    const res = await rsvpToSession(sessionId, status).catch((e) => ({ ok: false as const, message: e.message }));
+
+    setRsvpLoading((s) => { const n = new Set(s); n.delete(sessionId); return n; });
+    if (res && !res.ok) {
+      // Rollback optimistic update on error
+      setRsvpStatus((s) => ({ ...s, [sessionId]: prev }));
+      setRsvpToast((t) => ({ ...t, [sessionId]: res.message || "Failed to update RSVP" }));
+    } else {
+      setRsvpToast((t) => ({ ...t, [sessionId]: status === "going" ? "✅ You're in!" : "👋 Marked as not playing" }));
+      setTimeout(() => setRsvpToast((t) => { const n = { ...t }; delete n[sessionId]; return n; }), 2500);
+    }
+  };
+  const handleCancelSession = async (sessionId: string, sessionName: string) => {
+    if (!confirm(`Cancel session "${sessionName}"?`)) return;
+    await deleteSession(sessionId).catch((e) => alert(e.message));
+  };
 
   useEffect(() => {
     if (!groupId) return;
@@ -99,10 +136,18 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       if (g) setGroup(g);
     });
 
+    // 1. Immediate initial load via server action (bypass security rules / offline delays)
+    void getGroupSessionsAction(groupId).then((res) => {
+      if (res.ok && res.data.length > 0) setSessions(res.data as any);
+    });
+
+    // 2. Realtime updates via client SDK
     const unsubPlayers = watchGroupPlayers(groupId, (p) => setPlayers(p as PlayerRow[]), () => setPlayers([]));
     const unsubMembers = watchGroupMembers(groupId, (m) => setMembers(m as unknown as MemberRow[]), () => setMembers([]));
     const unsubVenues = watchVenues(groupId, setVenues, () => setVenues([]));
-    const unsubSessions = watchGroupSessions(groupId, setSessions, () => setSessions([]));
+    const unsubSessions = watchGroupSessions(groupId, (sList) => {
+      if (sList.length > 0) setSessions(sList);
+    }, () => {});
     const unsubGroupDoc = watchGroupDoc(groupId, (g) => setInviteCode(g?.inviteCode), () => {});
     const unsubRequests = watchJoinRequests(groupId, setJoinRequests, () => setJoinRequests([]));
 
@@ -115,6 +160,29 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       unsubRequests();
     };
   }, [groupId]);
+
+  // Load existing RSVP statuses for the current user whenever sessions change
+  useEffect(() => {
+    if (!user?.uid || sessions.length === 0) return;
+    const db = getFirestore(getApp());
+    const upcoming = sessions.filter((s) => s.status === "scheduled" || s.status === "draft" || s.status === "active");
+    Promise.all(
+      upcoming.map(async (s) => {
+        try {
+          const snap = await getDoc(doc(db, `sessions/${s.id}/rsvps/${user.uid}`));
+          return { id: s.id, status: snap.exists() ? (snap.data().status as "going" | "not_going") : null };
+        } catch {
+          return { id: s.id, status: null };
+        }
+      })
+    ).then((results) => {
+      setRsvpStatus((prev) => {
+        const next = { ...prev };
+        results.forEach(({ id, status }) => { next[id] = status; });
+        return next;
+      });
+    });
+  }, [sessions, user?.uid]);
 
   useEffect(() => {
     if (!groupId || venues.length === 0) {
@@ -324,6 +392,142 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
       {activeTab === "members" && (
         <>
+          {/* Upcoming Sessions & RSVPs Banner for members & owners */}
+          {(() => {
+            const upcomingSessions = sessions.filter(
+              (s) => s.status === "scheduled" || s.status === "draft" || s.status === "active"
+            );
+            if (upcomingSessions.length === 0) return null;
+
+            return (
+              <section style={{
+                background: "var(--ink-800)", borderRadius: "var(--r-2xl)",
+                padding: "1.25rem 1.5rem", color: "var(--n-50)",
+                boxShadow: "var(--shadow-sm)", animation: "pb-rise 400ms 30ms var(--ease-out) both",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", marginBottom: "0.875rem" }}>
+                  <div>
+                    <span style={{
+                      display: "inline-flex", padding: "3px 9px", borderRadius: "var(--r-pill)",
+                      background: "var(--volt-500)", color: "var(--ink-800)",
+                      fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900,
+                      letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.375rem",
+                    }}>
+                      Upcoming Sessions & RSVPs
+                    </span>
+                    <h2 style={{ fontFamily: "var(--font-display)", fontSize: "1.375rem", fontWeight: 900, textTransform: "uppercase", letterSpacing: "-0.02em" }}>
+                      Next Session Schedule
+                    </h2>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: "0.75rem" }}>
+                  {upcomingSessions.map((s: any) => {
+                    const dateObj = s.startsAt && typeof s.startsAt.toDate === "function" ? s.startsAt.toDate() : null;
+                    const ts = dateObj
+                      ? dateObj.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : "Scheduled";
+                    const goingCount = s.rsvpGoingCount ?? 0;
+                    const notGoingCount = s.rsvpNotGoingCount ?? 0;
+
+                    return (
+                      <div key={s.id} style={{
+                        background: "rgba(246,248,244,0.08)", border: "1px solid rgba(246,248,244,0.14)",
+                        borderRadius: "var(--r-xl)", padding: "1rem",
+                        display: "grid", gap: "0.75rem",
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+                          <div>
+                            <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", fontWeight: 900, color: "var(--n-50)" }}>
+                              {s.name}
+                            </div>
+                            <div style={{ color: "rgba(246,248,244,0.7)", fontSize: "0.8125rem", marginTop: 2 }}>
+                              📍 {s.venueName || "Home Venue"} · {ts}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <span style={{
+                              padding: "4px 10px", borderRadius: "var(--r-pill)",
+                              background: "var(--volt-500)", color: "var(--ink-800)",
+                              fontFamily: "var(--font-mono)", fontSize: "0.6875rem", fontWeight: 900,
+                            }}>
+                              👍 {goingCount} Going · 👎 {notGoingCount} Not Going
+                            </span>
+                            <a href={`/sessions/${s.id}/live`} style={{
+                              height: 34, padding: "0 0.875rem", borderRadius: "var(--r-md)",
+                              background: "var(--n-50)", color: "var(--ink-800)", fontWeight: 900,
+                              fontSize: "0.75rem", textDecoration: "none", display: "inline-flex", alignItems: "center",
+                            }}>
+                              Open →
+                            </a>
+                          </div>
+                        </div>
+
+                        {s.status !== "active" && (() => {
+                          const myStatus = rsvpStatus[s.id] ?? null;
+                          const isLoading = rsvpLoading.has(s.id);
+                          const toast = rsvpToast[s.id];
+                          return (
+                            <div style={{ paddingTop: "0.625rem", borderTop: "1px solid rgba(246,248,244,0.12)" }}>
+                              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(246,248,244,0.6)" }}>
+                                  {myStatus ? "Change RSVP:" : "Your RSVP:"}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleRsvp(s.id, "going")}
+                                  style={{
+                                    height: 32, padding: "0 0.875rem", border: myStatus === "going" ? "2px solid var(--volt-500)" : "2px solid transparent",
+                                    borderRadius: "var(--r-pill)",
+                                    background: myStatus === "going" ? "var(--volt-500)" : "rgba(198,241,53,0.18)",
+                                    color: myStatus === "going" ? "var(--ink-800)" : "var(--volt-500)",
+                                    fontWeight: 900, fontSize: "0.75rem",
+                                    cursor: isLoading ? "default" : "pointer",
+                                    opacity: isLoading ? 0.6 : 1,
+                                    transition: "all 0.15s ease",
+                                    boxShadow: myStatus === "going" ? "0 0 0 3px rgba(198,241,53,0.25)" : "none",
+                                  }}
+                                >
+                                  {isLoading ? "…" : myStatus === "going" ? "✅ I'm Playing" : "👍 I'm Playing"}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleRsvp(s.id, "not_going")}
+                                  style={{
+                                    height: 32, padding: "0 0.875rem",
+                                    border: myStatus === "not_going" ? "2px solid rgba(246,248,244,0.6)" : "2px solid rgba(246,248,244,0.2)",
+                                    borderRadius: "var(--r-pill)",
+                                    background: myStatus === "not_going" ? "rgba(246,248,244,0.15)" : "transparent",
+                                    color: "var(--n-50)", fontWeight: myStatus === "not_going" ? 900 : 800, fontSize: "0.75rem",
+                                    cursor: isLoading ? "default" : "pointer",
+                                    opacity: isLoading ? 0.6 : 1,
+                                    transition: "all 0.15s ease",
+                                  }}
+                                >
+                                  {isLoading ? "…" : myStatus === "not_going" ? "❌ Not Playing" : "👎 Not Playing"}
+                                </button>
+                              </div>
+                              {toast && (
+                                <div style={{
+                                  marginTop: "0.5rem",
+                                  fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 700,
+                                  color: toast.startsWith("✅") ? "var(--volt-500)" : "rgba(246,100,100,0.9)",
+                                }}>
+                                  {toast}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
           {/* Pending join requests — any member can approve/reject */}
           {joinRequests.length > 0 && (
             <section data-testid="join-requests" style={{
@@ -715,6 +919,20 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                             {memberRole}
                           </span>
                         )}
+                        {canManageGroup(role) && memberRole !== "owner" && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePlayer(p.id, p.displayName)}
+                            style={{
+                              height: 30, padding: "0 0.5rem", border: "1px solid var(--border)",
+                              borderRadius: "var(--r-md)", background: "transparent",
+                              color: "var(--danger)", fontSize: "0.6875rem", fontWeight: 800,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Remove
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -828,7 +1046,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
         <section style={{ display: "grid", gap: "0.875rem" }}>
           {/* Filter chips */}
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            {(["active", "upcoming", "past"] as const).map((f) => (
+            {(["upcoming", "all", "active", "past"] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -842,75 +1060,137 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                   fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer",
                 }}
               >
-                {f === "active" ? "Live" : f === "upcoming" ? "Upcoming" : "Past"}
+                {f === "upcoming" ? `Upcoming (${sessions.filter(s => s.status === "scheduled" || s.status === "draft").length})` : f === "all" ? "All Sessions" : f === "active" ? "Live" : "Past"}
               </button>
             ))}
           </div>
 
           {(() => {
-            const now = Date.now();
             const filtered = sessions.filter((s) => {
-              const ts = s.startsAt && typeof (s.startsAt as any).toMillis === "function"
-                ? (s.startsAt as any).toMillis() : Number(s.startsAt) || 0;
+              if (sessionFilter === "all") return s.status !== "cancelled";
               if (sessionFilter === "active") return s.status === "active";
-              if (sessionFilter === "upcoming") return s.status === "scheduled" || (s.status === "draft" && ts > now);
+              if (sessionFilter === "upcoming") return s.status === "scheduled" || s.status === "draft";
               return s.status === "completed" || s.status === "cancelled";
             });
 
             if (filtered.length === 0) {
               return (
                 <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem", textAlign: "center", color: "var(--text-2)" }}>
-                  No {sessionFilter} sessions.
+                  No {sessionFilter === "all" ? "" : sessionFilter} sessions found.
                 </div>
               );
             }
 
             return (
               <div style={{ display: "grid", gap: "0.625rem" }}>
-                {filtered.map((s) => {
-                  const ts = s.startsAt && typeof (s.startsAt as any).toDate === "function"
-                    ? (s.startsAt as any).toDate().toLocaleDateString() : "";
+                {filtered.map((s: any) => {
+                  const dateObj = s.startsAt && typeof s.startsAt.toDate === "function" ? s.startsAt.toDate() : null;
+                  const ts = dateObj
+                    ? dateObj.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    : "";
                   const statusTone = s.status === "active"
                     ? { bg: "var(--volt-500)", fg: "var(--ink-800)" }
                     : s.status === "completed"
                       ? { bg: "var(--emerald-100)", fg: "var(--emerald-700)" }
                       : { bg: "var(--surface-sunken)", fg: "var(--text-3)" };
 
+                  const goingCount = s.rsvpGoingCount ?? 0;
+                  const notGoingCount = s.rsvpNotGoingCount ?? 0;
+                  const isUpcoming = s.status === "scheduled" || s.status === "draft";
+
                   return (
                     <div key={s.id} data-testid="session-list-item" style={{
                       background: "var(--surface)", border: "1px solid var(--border)",
-                      borderRadius: "var(--r-xl)", padding: "0.875rem 1rem",
+                      borderRadius: "var(--r-xl)", padding: "1rem",
                       boxShadow: "var(--shadow-xs)",
-                      display: "grid", gridTemplateColumns: "1fr auto",
-                      gap: "0.75rem", alignItems: "center",
+                      display: "grid", gap: "0.75rem",
                     }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
-                          <span style={{
-                            padding: "2px 7px", borderRadius: "var(--r-pill)",
-                            background: statusTone.bg, color: statusTone.fg,
-                            fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
-                            fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase",
-                          }}>
-                            {s.status}
-                          </span>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem", flexWrap: "wrap" }}>
+                            <span style={{
+                              padding: "2px 7px", borderRadius: "var(--r-pill)",
+                              background: statusTone.bg, color: statusTone.fg,
+                              fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
+                              fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase",
+                            }}>
+                              {s.status}
+                            </span>
+                            {isUpcoming && (
+                              <span style={{
+                                padding: "2px 7px", borderRadius: "var(--r-pill)",
+                                background: "rgba(198,241,53,0.15)", color: "var(--ink-800)",
+                                fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 800,
+                              }}>
+                                👍 {goingCount} Going · 👎 {notGoingCount} Not Going
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontWeight: 900, fontSize: "1.125rem" }}>{s.name}</div>
+                          <div style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginTop: "0.125rem" }}>
+                            {s.venueName ? `${s.venueName} · ` : ""}{ts}
+                          </div>
                         </div>
-                        <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</div>
-                        <div style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginTop: "0.125rem" }}>
-                          {s.venueName} · {ts}
-                        </div>
+
+                        <a
+                          href={`/sessions/${s.id}/live`}
+                          style={{
+                            height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
+                            background: "var(--ink-800)", color: "var(--volt-500)",
+                            fontWeight: 800, fontSize: "0.8125rem",
+                            textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
+                          }}
+                        >
+                          {s.status === "active" ? "Live Console" : "View Session"}
+                        </a>
                       </div>
-                      <a
-                        href={`/sessions/${s.id}/live`}
-                        style={{
-                          height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
-                          background: "var(--ink-800)", color: "var(--volt-500)",
-                          fontWeight: 800, fontSize: "0.8125rem",
-                          textDecoration: "none", display: "inline-flex", alignItems: "center",
-                        }}
-                      >
-                        {s.status === "active" ? "Live" : "View"}
-                      </a>
+
+                      {/* RSVP Buttons for upcoming sessions */}
+                      {isUpcoming && (
+                        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", paddingTop: "0.5rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                            RSVP:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRsvp(s.id, "going")}
+                            style={{
+                              height: 32, padding: "0 0.75rem", border: "none",
+                              borderRadius: "var(--r-pill)", background: "var(--volt-500)",
+                              color: "var(--ink-800)", fontWeight: 900, fontSize: "0.75rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            👍 I'm Playing
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRsvp(s.id, "not_going")}
+                            style={{
+                              height: 32, padding: "0 0.75rem", border: "1px solid var(--border)",
+                              borderRadius: "var(--r-pill)", background: "var(--surface-sunken)",
+                              color: "var(--text-2)", fontWeight: 800, fontSize: "0.75rem",
+                              cursor: "pointer",
+                            }}
+                          >
+                            👎 Not Playing
+                          </button>
+                          {canManageGroup(role) && (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelSession(s.id, s.name)}
+                              style={{
+                                height: 32, padding: "0 0.625rem", border: "none",
+                                borderRadius: "var(--r-pill)", background: "transparent",
+                                color: "var(--danger)", fontWeight: 800, fontSize: "0.75rem",
+                                cursor: "pointer", marginLeft: "auto",
+                              }}
+                            >
+                              Cancel Session
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

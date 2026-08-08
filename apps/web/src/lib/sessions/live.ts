@@ -4,7 +4,13 @@ import { leaderboardCompare, ScoringMode, LeaderboardRow } from "@picklebaddies/
 import { logEvent } from "@/lib/analytics/events";
 import { watchWithFallback } from "@/lib/realtime/watchWithFallback";
 import { generateSchedule as serverGenerateSchedule } from "@/server/sessions/generate";
-import { updateSessionStatus } from "@/server/sessions/actions";
+import { updateSessionStatus, deleteSession as serverDeleteSession } from "@/server/sessions/actions";
+
+export async function deleteSession(data: { sessionId: string }) {
+  const result = await serverDeleteSession(data.sessionId);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
+}
 
 export async function generateSchedule(data: { sessionId: string }) {
   const result = await serverGenerateSchedule(data.sessionId);

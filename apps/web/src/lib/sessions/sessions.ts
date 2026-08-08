@@ -138,10 +138,19 @@ export function watchGroupSessions(
   const q = query(
     collection(db, "sessions"),
     where("groupId", "==", groupId),
-    orderBy("startsAt", "desc"),
   );
   const unsub = onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SessionSummary, "id">) })));
+    const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SessionSummary, "id">) }));
+    list.sort((a, b) => {
+      const getMs = (val: any) => {
+        if (!val) return 0;
+        if (typeof val.toMillis === "function") return val.toMillis();
+        if (typeof val.toDate === "function") return val.toDate().getTime();
+        return new Date(val).getTime() || 0;
+      };
+      return getMs(b.startsAt) - getMs(a.startsAt);
+    });
+    cb(list);
   }, onError);
   return () => safeUnsubscribe(unsub);
 }

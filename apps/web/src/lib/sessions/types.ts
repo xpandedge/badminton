@@ -28,6 +28,8 @@ export interface Session {
   joinEnabled: boolean;
   scoreCode: string;
   scoreLinkEnabled: boolean;
+  /** Read-only public player board (see-your-matches). Absent = enabled (legacy sessions). */
+  boardEnabled?: boolean;
 }
 
 export interface SessionPlayer {

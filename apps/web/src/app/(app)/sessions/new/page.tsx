@@ -6,6 +6,7 @@ import { createSession } from "@/server/sessions/actions";
 import { getOrCreateDefaultSquad } from "@/server/squads/actions";
 import { getSportConfig } from "@picklebaddies/domain";
 import { watchUserGroups } from "@/lib/groups/groups";
+import { watchVenues, watchCourts } from "@/lib/groups/venues";
 import { useAuth } from "@/lib/auth/useAuth";
 import { useSportPreference } from "@/lib/sport/SportPreferenceContext";
 
@@ -27,6 +28,7 @@ export default function NewSessionPage() {
   const [name, setName] = useState("Saturday Social");
   const [sport, setSport] = useState<"badminton" | "pickleball">("pickleball");
   const [durationMinutes, setDurationMinutes] = useState(90);
+  const [scheduledTime, setScheduledTime] = useState("");
   const [scoringMode, setScoringMode] = useState<"winner_only" | "points">("points");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,6 +45,9 @@ export default function NewSessionPage() {
     setScoringMode(sportConfig.defaultScoringMode as "winner_only" | "points");
   }, [sport]);
 
+  const [savedVenues, setSavedVenues] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
+  const [selectedVenueId, setSelectedVenueId] = useState<string>("");
+
   useEffect(() => {
     if (!user) return;
     return watchUserGroups(
@@ -52,18 +57,29 @@ export default function NewSessionPage() {
     );
   }, [user]);
 
-  // First-time users have no squad yet — provision one silently so they can
-  // start a session with zero setup, same as everyone who already has one.
+  // When selected squad changes, watch its venues and auto-prefill Home Venue
   useEffect(() => {
-    if (!groupsLoaded || groups.length > 0 || hasAutoProvisioned.current) return;
-    hasAutoProvisioned.current = true;
-    setProvisioningSquad(true);
-    getOrCreateDefaultSquad()
-      .then((result) => {
-        if (result?.ok) setGroupId(result.data.squadId);
-      })
-      .finally(() => setProvisioningSquad(false));
-  }, [groupsLoaded, groups]);
+    if (!groupId) { setSavedVenues([]); return; }
+    return watchVenues(groupId, (venues) => {
+      setSavedVenues(venues);
+      if (venues.length > 0) {
+        const home = venues.find(v => v.isHome) ?? venues[0]!;
+        setSelectedVenueId(home.id);
+        setVenueName(home.name);
+      }
+    });
+  }, [groupId]);
+
+  // When selected venue changes, watch its saved courts to auto-fill Courts field
+  useEffect(() => {
+    if (!groupId || !selectedVenueId || selectedVenueId === "custom") return;
+    return watchCourts(groupId, selectedVenueId, (courts) => {
+      if (courts.length > 0) {
+        const courtList = courts.map((c: any) => c.name ?? `Court ${c.courtNumber ?? ""}`).filter(Boolean);
+        if (courtList.length > 0) setCourtsText(courtList.join("\n"));
+      }
+    });
+  }, [groupId, selectedVenueId]);
 
   const courtNames = courtsText
     .split(/[\n,]+/)
@@ -91,6 +107,7 @@ export default function NewSessionPage() {
         estimatedGameMinutes: ESTIMATED_GAME_MINUTES,
         scoringMode,
         venueName,
+        startsAtIso: scheduledTime ? new Date(scheduledTime).toISOString() : undefined,
       });
       if (!result) throw new Error("No response from server — check admin SDK config");
       if (!result.ok) throw new Error(result.message);
@@ -179,25 +196,63 @@ export default function NewSessionPage() {
             fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
             letterSpacing: "0.14em", textTransform: "uppercase",
             color: "var(--text-3)", marginBottom: "-0.25rem",
-          }}>Where</div>
+          }}>Venue & Courts</div>
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Group</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Squad</span>
             {provisioningSquad ? (
               <div className="pb-input" style={{ color: "var(--text-3)", display: "flex", alignItems: "center" }}>
                 Setting up your squad…
               </div>
             ) : (
               <select data-testid="session-group-select" className="pb-input" value={groupId} onChange={e => setGroupId(e.target.value)} required>
-                <option value="">Select a group…</option>
+                <option value="">Select a squad…</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             )}
           </label>
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Venue</span>
-            <input data-testid="session-venue-input" className="pb-input" value={venueName} onChange={e => setVenueName(e.target.value)} placeholder="Community Sports Hall" required />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                Venue
+              </span>
+            </div>
+            {savedVenues.length > 0 ? (
+              <select
+                className="pb-input"
+                value={selectedVenueId}
+                onChange={(e) => {
+                  const vid = e.target.value;
+                  setSelectedVenueId(vid);
+                  if (vid !== "custom") {
+                    const match = savedVenues.find(v => v.id === vid);
+                    if (match) setVenueName(match.name);
+                  } else {
+                    setVenueName("");
+                  }
+                }}
+                style={{ height: 44, borderRadius: "var(--r-md)" }}
+              >
+                {savedVenues.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.isHome ? "🏠 Home Venue: " : "📍 "}{v.name}
+                  </option>
+                ))}
+                <option value="custom">✏️ Enter custom / other venue…</option>
+              </select>
+            ) : null}
+            {(savedVenues.length === 0 || selectedVenueId === "custom") && (
+              <input
+                data-testid="session-venue-input"
+                className="pb-input"
+                value={venueName}
+                onChange={e => setVenueName(e.target.value)}
+                placeholder="Community Sports Hall"
+                required
+                style={{ height: 44, borderRadius: "var(--r-md)" }}
+              />
+            )}
           </label>
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
@@ -235,7 +290,7 @@ export default function NewSessionPage() {
             fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
             letterSpacing: "0.14em", textTransform: "uppercase",
             color: "var(--text-3)", marginBottom: "-0.25rem",
-          }}>What</div>
+          }}>Session Details</div>
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Session name</span>
@@ -273,8 +328,8 @@ export default function NewSessionPage() {
           <label style={{ display: "grid", gap: "0.4rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Scoring</span>
             <select className="pb-input" value={scoringMode} onChange={e => setScoringMode(e.target.value as "winner_only" | "points")}>
-              <option value="points">Points</option>
-              <option value="winner_only">Winner only</option>
+              <option value="points">Full score (e.g. 11–7)</option>
+              <option value="winner_only">Win / Loss only</option>
             </select>
           </label>
         </section>
@@ -290,7 +345,7 @@ export default function NewSessionPage() {
             fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
             letterSpacing: "0.14em", textTransform: "uppercase",
             color: "var(--text-3)", marginBottom: "-0.25rem",
-          }}>How long are you playing?</div>
+          }}>Schedule</div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "0.375rem" }}>
             {[60, 90, 120, 180].map((mins) => (
@@ -310,9 +365,22 @@ export default function NewSessionPage() {
               >{mins < 120 ? `${mins}m` : `${mins / 60}h`}</button>
             ))}
           </div>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.05em" }}>
-            Courts refill automatically as games finish — no rounds to manage.
-          </div>
+
+          <label style={{ display: "grid", gap: "0.4rem", marginTop: "0.5rem" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+              Date &amp; Time (optional)
+            </span>
+            <input
+              type="datetime-local"
+              className="pb-input"
+              value={scheduledTime}
+              onChange={(e) => setScheduledTime(e.target.value)}
+              style={{ height: 44, borderRadius: "var(--r-md)" }}
+            />
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.05em" }}>
+              Leave blank to start now. Set a future time to let members RSVP.
+            </div>
+          </label>
         </section>
 
         <button

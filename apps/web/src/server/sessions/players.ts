@@ -318,6 +318,101 @@ export async function markPlayerInjured(
   }
 }
 
+// ── addGuestPlayerToSession ───────────────────────────────────────────────────
+
+export interface AddSessionGuestInput {
+  sessionId: string;
+  displayName: string;
+  skillLevel?: string;
+}
+
+export async function addGuestPlayerToSession(
+  input: AddSessionGuestInput,
+): Promise<ActionResult<{ playerId: string; rebalanceRecommended: boolean }>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const { sessionId, displayName, skillLevel = "unknown" } = input;
+  if (!sessionId || !displayName || displayName.trim().length < 1) {
+    return err("INVALID_ARGUMENT", "sessionId and displayName are required");
+  }
+
+  const db = getAdminDb();
+
+  try {
+    const result = await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canManageSessionPlayers(role)) {
+        throw Object.assign(new Error("Must be a squad member to add players"), { code: "FORBIDDEN" });
+      }
+
+      const guestDocRef = db.collection(`sessions/${sessionId}/players`).doc();
+      const playerId = `guest_${guestDocRef.id}`;
+      const name = displayName.trim();
+
+      // Write player doc in session
+      t.set(db.doc(`sessions/${sessionId}/players/${playerId}`), {
+        playerId,
+        displayName: name,
+        skillLevel,
+        status: "active",
+        participantType: "guest",
+        joinedAt: FieldValue.serverTimestamp(),
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+        sitOutCount: 0,
+      });
+
+      // Write leaderboard entry
+      t.set(db.doc(`sessions/${sessionId}/leaderboard/${playerId}`), {
+        displayName: name,
+        gamesPlayed: 0,
+        wins: 0,
+        losses: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+        pointDifference: 0,
+        sitOutCount: 0,
+      });
+
+      // Write player in group so they show up for squad stats
+      t.set(db.doc(`groups/${session.groupId}/players/${playerId}`), {
+        userId: null,
+        displayName: name,
+        email: null,
+        skillLevel,
+        isGuest: true,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "player/guest_added",
+        details: { playerId, displayName: name },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      return { playerId, rebalanceRecommended: session.status === "active" || session.status === "paused" };
+    });
+
+    return ok(result);
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    throw e;
+  }
+}
+
 /** PRD §12.10: swap two players in a future (scheduled, not locked) match. */
 export async function swapPlayers(
   sessionId: string,

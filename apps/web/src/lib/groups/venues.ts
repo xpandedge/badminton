@@ -37,11 +37,21 @@ export function watchCourts(
 
 export function watchVenues(
   groupId: string,
-  cb: (venues: Array<{ id: string; name: string }>) => void,
+  cb: (venues: Array<{ id: string; name: string; isHome?: boolean }>) => void,
   onError?: (error: Error) => void,
 ): () => void {
   const { db } = getFirebaseServices();
   const unsub = onSnapshot(query(collection(db, `groups/${groupId}/venues`)), (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) }))), onError);
+    cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as { name: string; isHome?: boolean }) }))), onError);
   return () => safeUnsubscribe(unsub);
 }
+
+export async function setHomeVenue(groupId: string, venueId: string, venueName: string): Promise<void> {
+  const { db } = getFirebaseServices();
+  await updateDoc(doc(db, "groups", groupId), {
+    homeVenueId: venueId,
+    homeVenueName: venueName,
+    updatedAt: serverTimestamp(),
+  });
+}
+

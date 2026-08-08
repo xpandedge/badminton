@@ -2,8 +2,8 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchEngineState } from "@/lib/sessions/live";
-import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured } from "@/lib/sessions/rebalance";
+import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchEngineState, deleteSession } from "@/lib/sessions/live";
+import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured, addGuestPlayerToSession } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
@@ -11,7 +11,9 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore } from "@/lib/sessions/scoring";
+import { QRCode } from "@/components/QRCode";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
+import { formatSessionStatus, formatScoringMode } from "@/lib/format/status";
 
 function titleCase(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -41,8 +43,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const [rebalanceSummary, setRebalanceSummary] = useState<string | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [showBoardModal, setShowBoardModal] = useState(false);
+  const [boardCopied, setBoardCopied] = useState(false);
   const [selectedGroupPlayerId, setSelectedGroupPlayerId] = useState("");
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
+  const [sessionGuestName, setSessionGuestName] = useState("");
+  const [sessionGuestSkill, setSessionGuestSkill] = useState("unknown");
+  const [isAddingSessionGuest, setIsAddingSessionGuest] = useState(false);
 
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
@@ -121,6 +128,29 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const canControlSession = canCreateSession(role);
   const canGenerate = canGenerateSchedule(role);
 
+  const boardEnabled = session.boardEnabled !== false;
+  const boardPath = session.scoreCode ? `/board/${session.scoreCode}` : null;
+  const boardUrl = boardPath && typeof window !== "undefined" ? `${window.location.origin}${boardPath}` : boardPath ?? "";
+
+  const handleShareBoard = async () => {
+    if (!boardUrl) return;
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        await (navigator as Navigator & { share: (d: ShareData) => Promise<void> }).share({
+          title: `${session.name} — player board`,
+          text: "See your matches:",
+          url: boardUrl,
+        });
+        return;
+      } catch {
+        /* cancelled / unsupported — fall through */
+      }
+    }
+    await navigator.clipboard?.writeText(boardUrl);
+    setBoardCopied(true);
+    setTimeout(() => setBoardCopied(false), 1600);
+  };
+
   // Generate + start are one step from the organiser's point of view — if no
   // schedule exists yet, seed it first, then start immediately.
   const handleStart = async () => {
@@ -176,6 +206,33 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       await addLatePlayer({ sessionId, playerId: picked.id, displayName: picked.displayName });
       setSelectedGroupPlayerId("");
     } catch (e: any) { setActionError(e.message); }
+  };
+
+  const handleAddSessionGuest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionGuestName.trim() || isAddingSessionGuest) return;
+    setIsAddingSessionGuest(true);
+    setActionError(null);
+    try {
+      const res = await addGuestPlayerToSession({ sessionId, displayName: sessionGuestName, skillLevel: sessionGuestSkill });
+      setSessionGuestName("");
+      setSessionGuestSkill("unknown");
+      if (res.data.rebalanceRecommended) {
+        if (confirm(`Guest "${sessionGuestName.trim()}" added. Update rotation to include them in upcoming courts?`)) {
+          await handleRebalance("player_added");
+        }
+      }
+    } catch (err: any) { setActionError(err.message); }
+    finally { setIsAddingSessionGuest(false); }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!confirm("Are you sure you want to cancel/delete this session?")) return;
+    setActionError(null);
+    try {
+      await deleteSession({ sessionId });
+      window.location.href = `/groups/${session.groupId}`;
+    } catch (err: any) { setActionError(err.message); }
   };
 
   const handleDisableCourt = async (courtId: string, courtName: string) => {
@@ -316,7 +373,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             fontWeight: 900,
             whiteSpace: "nowrap",
           }}>
-            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Locked" : titleCase(m.status)}
+            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Done" : formatSessionStatus(m.status)}
           </span>
         </div>
         <div style={{
@@ -434,7 +491,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 textTransform: "uppercase",
                 marginBottom: "0.875rem",
               }}>
-                {titleCase(session.status)}
+                {formatSessionStatus(session.status)}
               </span>
               <h1 style={{
                 fontFamily: "var(--font-display)",
@@ -448,7 +505,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {session.name}
               </h1>
               <p style={{ color: "rgba(246,248,244,0.72)", marginTop: "0.5rem", maxWidth: 760 }}>
-                Live console · {titleCase(session.scoringMode)} scoring · courts run independently
+                Live console · {formatScoringMode(session.scoringMode)} scoring · courts run independently
               </p>
             </div>
             <div style={{
@@ -544,18 +601,47 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             </h2>
             <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Generate, run courts, and rebalance current matches.</p>
           </div>
-          <a href={`/sessions/${sessionId}`} style={{
-            height: 42,
-            padding: "0 0.875rem",
-            borderRadius: "var(--r-md)",
-            background: "var(--surface-sunken)",
-            color: "var(--text-1)",
-            display: "inline-flex",
-            alignItems: "center",
-            fontWeight: 900,
-          }}>
-            Session Details
-          </a>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            {boardEnabled && boardPath && (
+              <button
+                type="button"
+                onClick={() => setShowBoardModal(true)}
+                style={{
+                  height: 42,
+                  padding: "0 0.875rem",
+                  borderRadius: "var(--r-md)",
+                  background: "var(--ink-800)",
+                  color: "var(--volt-500)",
+                  border: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  fontWeight: 900,
+                  cursor: "pointer",
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <path d="M14 14h3v3M20 20h.01M17 20h.01M20 17h.01" />
+                </svg>
+                Show Board
+              </button>
+            )}
+            <a href={`/sessions/${sessionId}`} style={{
+              height: 42,
+              padding: "0 0.875rem",
+              borderRadius: "var(--r-md)",
+              background: "var(--surface-sunken)",
+              color: "var(--text-1)",
+              display: "inline-flex",
+              alignItems: "center",
+              fontWeight: 900,
+            }}>
+              Session Details
+            </a>
+          </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.625rem" }}>
         {canControlSession && (session.status === "draft" || session.status === "scheduled") && (
@@ -572,6 +658,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         )}
         {canGenerate && isLive && (
           <button data-testid="rebalance-btn" onClick={() => handleRebalance("manual_rebalance")} style={{ ...primaryActionStyle, background: "var(--volt-500)", color: "var(--ink-800)" }}>Re-pick Current Matches</button>
+        )}
+        {canControlSession && (
+          <button onClick={handleDeleteSession} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid rgba(240,62,62,0.3)" }}>
+            Cancel / Delete Session
+          </button>
         )}
         </div>
       </section>
@@ -722,29 +813,70 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               No scores yet.
             </div>
           ) : (
-            <div style={{ display: "grid", gap: "0.5rem" }}>
+            <div style={{ display: "grid", gap: "0.375rem" }}>
+              {/* Leaderboard Header */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: `1.5rem minmax(0, 1fr) repeat(${session.scoringMode === "points" ? 5 : 4}, minmax(1.75rem, auto))`,
+                gap: "0.375rem",
+                padding: "0.25rem 0.5rem",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.625rem",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "var(--text-3)",
+              }}>
+                <span>#</span>
+                <span>Player</span>
+                <span style={{ textAlign: "right" }}>G</span>
+                <span style={{ textAlign: "right" }}>W</span>
+                <span style={{ textAlign: "right" }}>L</span>
+                <span style={{ textAlign: "right" }}>WIN%</span>
+                {session.scoringMode === "points" && <span style={{ textAlign: "right" }}>PD</span>}
+              </div>
+
               {leaderboard.map((row, idx) => {
+                const totalGames = row.gamesPlayed ?? ((row.wins ?? 0) + (row.losses ?? 0));
+                const wins = row.wins ?? 0;
+                const losses = row.losses ?? Math.max(0, totalGames - wins);
+                const winPct = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
                 const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                const pd = row.pointDifference ?? 0;
+
                 return (
-                <div key={row.playerId} style={{
-                  display: "grid",
-                  gridTemplateColumns: "auto minmax(0, 1fr) repeat(3, auto)",
-                  alignItems: "center",
-                  gap: "0.625rem",
-                  padding: "0.625rem",
-                  borderRadius: "var(--r-lg)",
-                  background: idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
-                }}>
-                  <span style={{ width: 26, height: 26, borderRadius: "50%", background: medal ? "transparent" : "var(--surface)", display: "grid", placeItems: "center", fontWeight: 900, fontSize: medal ? "1.125rem" : undefined }}>
-                    {medal ?? idx + 1}
-                  </span>
-                  <span style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {row.displayName ?? displayNameById.get(row.playerId) ?? row.playerId}
-                  </span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>W {row.wins}</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>L {row.losses}</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>{session.scoringMode === "points" ? `PD ${row.pointDifference}` : `GP ${row.gamesPlayed}`}</span>
-                </div>
+                  <div key={row.playerId} style={{
+                    display: "grid",
+                    gridTemplateColumns: `1.5rem minmax(0, 1fr) repeat(${session.scoringMode === "points" ? 5 : 4}, minmax(1.75rem, auto))`,
+                    alignItems: "center",
+                    gap: "0.375rem",
+                    padding: "0.5rem 0.5rem",
+                    borderRadius: "var(--r-lg)",
+                    background: idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
+                  }}>
+                    <span style={{ fontWeight: 900, fontSize: medal ? "1rem" : "0.75rem", fontFamily: "var(--font-mono)" }}>
+                      {medal ?? (idx + 1)}
+                    </span>
+                    <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {row.displayName ?? displayNameById.get(row.playerId) ?? row.playerId}
+                    </span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--text-1)" }}>
+                      {totalGames}
+                    </span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--volt-600)" }}>
+                      {wins}
+                    </span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: "var(--text-3)" }}>
+                      {losses}
+                    </span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: winPct >= 50 ? "var(--volt-600)" : "var(--text-2)" }}>
+                      {winPct}%
+                    </span>
+                    {session.scoringMode === "points" && (
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: pd > 0 ? "var(--volt-600)" : pd < 0 ? "var(--danger)" : "var(--text-3)" }}>
+                        {pd > 0 ? `+${pd}` : pd}
+                      </span>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -865,7 +997,79 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               );
             })()}
           </div>
+
+          {/* Add Walk-in Guest Player directly to session */}
+          <div style={{ marginTop: "0.5rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border)" }}>
+            <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.625rem" }}>
+              ⚡ Add Walk-in Guest Player (No Email Needed)
+            </h3>
+            <form onSubmit={handleAddSessionGuest} style={{ display: "grid", gridTemplateColumns: "1fr minmax(130px, 160px) auto", gap: "0.5rem", alignItems: "center" }}>
+              <input
+                data-testid="session-guest-name-input"
+                className="pb-input"
+                type="text"
+                placeholder="Walk-in guest name (e.g. Sam T.)"
+                value={sessionGuestName}
+                onChange={(e) => setSessionGuestName(e.target.value)}
+                required
+                style={{ height: 44, borderRadius: "var(--r-md)" }}
+              />
+              <select
+                className="pb-input"
+                value={sessionGuestSkill}
+                onChange={(e) => setSessionGuestSkill(e.target.value)}
+                style={{ height: 44, borderRadius: "var(--r-md)" }}
+              >
+                <option value="unknown">Skill: Unknown</option>
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+              <button
+                data-testid="session-guest-add-submit"
+                type="submit"
+                disabled={!sessionGuestName.trim() || isAddingSessionGuest}
+                style={{
+                  ...primaryActionStyle,
+                  height: 44,
+                  opacity: sessionGuestName.trim() && !isAddingSessionGuest ? 1 : 0.5,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isAddingSessionGuest ? "Adding…" : "+ Add Guest"}
+              </button>
+            </form>
+          </div>
         </section>
+      )}
+
+      {/* Player board QR modal */}
+      {showBoardModal && boardPath && (
+        <div
+          onClick={() => setShowBoardModal(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(22,36,28,0.52)", display: "grid", placeItems: "center", zIndex: 500, padding: "1rem" }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--surface)", borderRadius: "var(--r-xl)", padding: "1.5rem 1.25rem", maxWidth: 360, width: "100%", boxShadow: "var(--shadow-lg)", textAlign: "center" }}>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.25rem" }}>
+              Scan to see your matches
+            </div>
+            <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "1rem" }}>Player Board</h2>
+            <div style={{ display: "inline-block", background: "#fff", padding: 12, borderRadius: "var(--r-lg)", border: "1px solid var(--border)" }}>
+              <QRCode value={boardUrl} size={208} />
+            </div>
+            <div style={{ marginTop: "0.875rem", fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-2)", wordBreak: "break-all", lineHeight: 1.4 }}>
+              {boardUrl}
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+              <button onClick={handleShareBoard} style={{ flex: 1, height: 46, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer" }}>
+                {boardCopied ? "Copied ✓" : "Share link"}
+              </button>
+              <button onClick={() => setShowBoardModal(false)} style={{ height: 46, padding: "0 1rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-2)", fontWeight: 800, cursor: "pointer" }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Rebalance summary modal */}

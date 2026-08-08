@@ -425,3 +425,31 @@ export async function rotateInviteCode(squadId: string): Promise<ActionResult<{ 
   await db.doc(`groups/${squadId}`).update({ inviteCode, updatedAt: FieldValue.serverTimestamp() });
   return ok({ inviteCode });
 }
+
+// ── removePlayerFromSquad (owner / organiser) ───────────────────────────────
+
+export async function removePlayerFromSquad(
+  squadId: string,
+  targetPlayerId: string,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+  const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
+  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
+  if (!canManageSquad(callerRole)) {
+    return err("FORBIDDEN", "Only squad owners can remove players");
+  }
+
+  await db.runTransaction(async (t) => {
+    t.delete(db.doc(`groups/${squadId}/members/${targetPlayerId}`));
+    t.delete(db.doc(`groups/${squadId}/players/${targetPlayerId}`));
+    t.update(db.doc(`groups/${squadId}`), {
+      memberIds: FieldValue.arrayRemove(targetPlayerId),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  });
+
+  return ok(undefined);
+}

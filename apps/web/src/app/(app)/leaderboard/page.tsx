@@ -15,19 +15,36 @@ interface PlayerRow {
 }
 
 async function getLeaderboard(): Promise<PlayerRow[]> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection("players")
-    .orderBy("totalWins", "desc")
-    .orderBy("totalPointDiff", "desc")
-    .orderBy("totalGames", "desc")
-    .limit(100)
-    .get();
+  try {
+    const db = getAdminDb();
+    const snap = await db.collection("players").get();
+    const list = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        uid: d.id,
+        displayName: data.displayName || "Player",
+        isGuest: !!data.isGuest,
+        totalGames: Number(data.totalGames) || 0,
+        totalWins: Number(data.totalWins) || 0,
+        totalLosses: Number(data.totalLosses) || 0,
+        totalPointDiff: Number(data.totalPointDiff) || 0,
+        totalPointsFor: Number(data.totalPointsFor) || 0,
+        totalPointsAgainst: Number(data.totalPointsAgainst) || 0,
+      };
+    });
 
-  return snap.docs
-    .map((d) => ({ uid: d.id, ...(d.data() as Omit<PlayerRow, "uid">) }))
-    // Guest stats are day-of-session only (see submitScore) — never shown here.
-    .filter((p) => p.totalGames > 0 && !p.isGuest);
+    return list
+      .filter((p) => p.totalGames > 0 && !p.isGuest)
+      .sort((a, b) => {
+        if (b.totalWins !== a.totalWins) return b.totalWins - a.totalWins;
+        if (b.totalPointDiff !== a.totalPointDiff) return b.totalPointDiff - a.totalPointDiff;
+        return b.totalGames - a.totalGames;
+      })
+      .slice(0, 100);
+  } catch (err) {
+    console.error("Leaderboard fetch error:", err);
+    return [];
+  }
 }
 
 export default async function LeaderboardPage() {
@@ -48,7 +65,7 @@ export default async function LeaderboardPage() {
           lineHeight: 1,
           marginBottom: "0.375rem",
         }}>
-          Leaderboard
+          All-Time Rankings
         </h1>
         <p style={{ color: "var(--text-2)", fontSize: "0.9375rem" }}>
           All-time standings across every session and squad.
@@ -69,7 +86,7 @@ export default async function LeaderboardPage() {
           {/* Header row */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "2rem minmax(0,1fr) repeat(4, 4rem)",
+            gridTemplateColumns: "2rem minmax(0,1fr) repeat(5, 3.5rem)",
             gap: "0.5rem",
             padding: "0.5rem 0.75rem",
             fontFamily: "var(--font-mono)",
@@ -80,21 +97,23 @@ export default async function LeaderboardPage() {
           }}>
             <span>#</span>
             <span>Player</span>
-            <span style={{ textAlign: "right" }}>W</span>
-            <span style={{ textAlign: "right" }}>L</span>
-            <span style={{ textAlign: "right" }}>GP</span>
-            <span style={{ textAlign: "right" }}>PD</span>
+            <span style={{ textAlign: "right" }}>Played</span>
+            <span style={{ textAlign: "right" }}>Won</span>
+            <span style={{ textAlign: "right" }}>Lost</span>
+            <span style={{ textAlign: "right" }}>Win%</span>
+            <span style={{ textAlign: "right" }}>+/−</span>
           </div>
 
           {rows.map((row, idx) => {
             const isTop3 = idx < 3;
             const medalColor = idx === 0 ? "var(--volt-500)" : idx === 1 ? "#c0c0c0" : "#cd7f32";
+            const winPct = row.totalGames > 0 ? Math.round((row.totalWins / row.totalGames) * 100) : 0;
             return (
               <div
                 key={row.uid}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "2rem minmax(0,1fr) repeat(4, 4rem)",
+                  gridTemplateColumns: "2rem minmax(0,1fr) repeat(5, 3.5rem)",
                   gap: "0.5rem",
                   alignItems: "center",
                   padding: "0.875rem 0.75rem",
@@ -138,14 +157,17 @@ export default async function LeaderboardPage() {
                   )}
                 </div>
 
+                <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 800, color: "var(--text-1)" }}>
+                  {row.totalGames}
+                </span>
                 <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 900, color: "var(--volt-600)" }}>
                   {row.totalWins}
                 </span>
                 <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>
                   {row.totalLosses}
                 </span>
-                <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
-                  {row.totalGames}
+                <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 800, color: winPct >= 50 ? "var(--volt-600)" : "var(--text-2)" }}>
+                  {winPct}%
                 </span>
                 <span style={{
                   textAlign: "right",
@@ -160,17 +182,7 @@ export default async function LeaderboardPage() {
         </div>
       )}
 
-      <p style={{
-        marginTop: "1.5rem",
-        fontFamily: "var(--font-mono)",
-        fontSize: "0.625rem",
-        color: "var(--text-3)",
-        letterSpacing: "0.08em",
-        textTransform: "uppercase",
-        textAlign: "center",
-      }}>
-        W = Wins · L = Losses · GP = Games Played · PD = Point Diff
-      </p>
+
     </div>
   );
 }

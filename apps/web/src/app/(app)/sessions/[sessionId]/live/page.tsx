@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchEngineState } from "@/lib/sessions/live";
-import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, moveMatch, disableCourt, markPlayerInjured } from "@/lib/sessions/rebalance";
+import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
@@ -44,8 +44,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [selectedGroupPlayerId, setSelectedGroupPlayerId] = useState("");
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
 
-  const [swapSelections, setSwapSelections] = useState<Record<string, string>>({});
-  const [moveSelections, setMoveSelections] = useState<Record<string, string>>({});
   const [engineState, setEngineState] = useState<any | null>(null);
 
   const leaderboardLogged = useRef(false);
@@ -122,16 +120,16 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const canControlSession = canCreateSession(role);
   const canGenerate = canGenerateSchedule(role);
 
-  const handleGenerate = async () => {
-    setActionError(null);
-    try {
-      await generateSchedule({ sessionId });
-    } catch (e: any) { setActionError(e.message); }
-  };
-
+  // Generate + start are one step from the organiser's point of view — if no
+  // schedule exists yet, seed it first, then start immediately.
   const handleStart = async () => {
     setActionError(null);
-    try { await startSession({ sessionId }); } catch (e: any) { setActionError(e.message); }
+    try {
+      if (matches.length === 0) {
+        await generateSchedule({ sessionId });
+      }
+      await startSession({ sessionId });
+    } catch (e: any) { setActionError(e.message); }
   };
 
   const handleRebalance = async (trigger?: string) => {
@@ -199,26 +197,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     } catch (e: any) { setActionError(e.message); }
   };
 
-  const handleSwapPlayer = async (matchId: string, outPlayerId: string) => {
-    const inPlayerId = swapSelections[`${matchId}:${outPlayerId}`];
-    if (!inPlayerId) return;
+  // One click: picking a replacement in the dropdown swaps immediately.
+  const handleSwapPlayer = async (matchId: string, outPlayerId: string, inPlayerId: string) => {
     setActionError(null);
     try {
       await swapPlayers({ sessionId, matchId, outPlayerId, inPlayerId });
-      setSwapSelections((prev) => {
-        const next = { ...prev };
-        delete next[`${matchId}:${outPlayerId}`];
-        return next;
-      });
-    } catch (e: any) { setActionError(e.message); }
-  };
-
-  const handleMoveMatch = async (matchId: string) => {
-    const courtId = moveSelections[matchId];
-    if (!courtId) return;
-    setActionError(null);
-    try {
-      await moveMatch({ sessionId, matchId, courtId });
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -289,41 +272,21 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       (p) => !inMatch.has(p.playerId) && (p.status === "active" || p.status === "checked_in")
     );
     const renderSwap = (p: any, alignRight: boolean) => {
-      const key = `${m.id}:${p.playerId}`;
       return (
         <div key={p.playerId} data-testid="match-player" style={{ display: "grid", gap: "0.375rem", justifyItems: alignRight ? "end" : "start" }}>
           <span style={{ fontWeight: 900 }}>{p.displayName}</span>
           {canManageLive && !isLocked && (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", maxWidth: "100%" }}>
-              <select
-                value={swapSelections[`${m.id}:${p.playerId}`] ?? ""}
-                onChange={(e) => setSwapSelections((prev) => ({ ...prev, [key]: e.target.value }))}
-                className="pb-input"
-                style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem" }}
-              >
-                <option value="">Swap with...</option>
-                {eligibleForSwap.map((ep) => (
-                  <option key={ep.playerId} value={ep.playerId}>{ep.displayName}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => handleSwapPlayer(m.id, p.playerId)}
-                disabled={!swapSelections[key]}
-                style={{
-                  height: 34,
-                  padding: "0 0.5rem",
-                  border: "none",
-                  borderRadius: "var(--r-md)",
-                  background: "var(--ink-800)",
-                  color: "var(--volt-500)",
-                  fontWeight: 900,
-                  opacity: swapSelections[key] ? 1 : 0.45,
-                  cursor: "pointer",
-                }}
-              >
-                Go
-              </button>
-            </span>
+            <select
+              value=""
+              onChange={(e) => { if (e.target.value) handleSwapPlayer(m.id, p.playerId, e.target.value); }}
+              className="pb-input"
+              style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem", maxWidth: 150 }}
+            >
+              <option value="">Swap with...</option>
+              {eligibleForSwap.map((ep) => (
+                <option key={ep.playerId} value={ep.playerId}>{ep.displayName}</option>
+              ))}
+            </select>
           )}
         </div>
       );
@@ -376,61 +339,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </div>
         </div>
 
-        {canManageLive && !isLocked && (
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem", flexWrap: "wrap" }}>
-            <select
-              value={moveSelections[m.id] ?? ""}
-              onChange={(e) => setMoveSelections((prev) => ({ ...prev, [m.id]: e.target.value }))}
-              className="pb-input"
-              style={{ height: 40, borderRadius: "var(--r-md)", width: 190, padding: "0 0.75rem", fontSize: "0.8125rem" }}
-            >
-              <option value="">Move to court...</option>
-              {activeCourts.filter((c) => c.courtId !== m.courtId).map((c) => (
-                <option key={c.courtId} value={c.courtId}>{c.name}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => handleMoveMatch(m.id)}
-              disabled={!moveSelections[m.id]}
-              style={{
-                height: 40,
-                padding: "0 0.75rem",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-md)",
-                background: "var(--surface)",
-                fontWeight: 900,
-                opacity: moveSelections[m.id] ? 1 : 0.45,
-                cursor: "pointer",
-              }}
-            >
-              Move
-            </button>
-          </div>
-        )}
-
-        {canScore && !isLocked && (
-          <div style={{ marginBottom: "0.625rem" }}>
-            <button
-              data-testid="finish-game-btn"
-              onClick={() => handleFinishGame(m.id)}
-              style={{
-                width: "100%",
-                height: 44,
-                border: "2px solid var(--volt-500)",
-                borderRadius: "var(--r-md)",
-                background: "transparent",
-                color: "var(--volt-500)",
-                fontWeight: 900,
-                cursor: "pointer",
-                fontSize: "0.9375rem",
-                letterSpacing: "0.02em",
-              }}
-            >
-              ✓ Finish Game (No Score)
-            </button>
-          </div>
-        )}
-
         {canScore && !isLocked && session!.scoringMode === "points" ? (
           <form onSubmit={(e) => submitScorePoints(m.id, e)} style={{ display: "grid", gridTemplateColumns: "80px auto 80px minmax(120px, auto)", gap: "0.5rem", alignItems: "center" }}>
             <input data-testid="score-team-a-input" name="teamA" type="number" required defaultValue={m.scorePayload?.teamAScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
@@ -444,6 +352,26 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <button data-testid="score-winner-b" onClick={() => submitScoreWinnerOnly(m.id, "B")} style={m.winnerTeam === "B" ? primaryActionStyle : secondaryActionStyle}>B Wins</button>
           </div>
         ) : null}
+
+        {canScore && !isLocked && (
+          <button
+            data-testid="finish-game-btn"
+            onClick={() => handleFinishGame(m.id)}
+            style={{
+              display: "block",
+              margin: "0.5rem auto 0",
+              border: "none",
+              background: "transparent",
+              color: "var(--text-3)",
+              fontWeight: 700,
+              cursor: "pointer",
+              fontSize: "0.75rem",
+              textDecoration: "underline",
+            }}
+          >
+            Skip scoring, just finish
+          </button>
+        )}
       </div>
     );
   }
@@ -616,10 +544,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </a>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.625rem" }}>
-        {canGenerate && (session.status === "draft" || session.status === "scheduled") && (
-          <button data-testid="generate-schedule-btn" onClick={handleGenerate} style={primaryActionStyle}>Generate Schedule</button>
-        )}
-        {canControlSession && (session.status === "draft" || session.status === "scheduled") && matches.length > 0 && (
+        {canControlSession && (session.status === "draft" || session.status === "scheduled") && (
           <button data-testid="start-session-btn" onClick={handleStart} style={primaryActionStyle}>Start Session</button>
         )}
         {canControlSession && session.status === "active" && (

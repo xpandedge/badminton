@@ -14,7 +14,9 @@ export type AnalyticsEvent =
   | "round_advanced"
   | "rebalance_triggered"
   | "session_completed"
-  | "leaderboard_viewed";
+  | "leaderboard_viewed"
+  | "game_finished_no_score"
+  | "player_injured";
 
 export async function logEvent(name: AnalyticsEvent, params?: Record<string, unknown>): Promise<void> {
   if (!(await isSupported())) return;

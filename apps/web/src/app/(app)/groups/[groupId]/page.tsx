@@ -9,7 +9,7 @@ import { addVenue, addCourt, watchCourts, watchVenues } from "@/lib/groups/venue
 import { type GroupRole } from "@picklebaddies/domain";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
-import { addMemberToSquad } from "@/server/squads/actions";
+import { addMemberToSquad, addGuestPlayerToSquad } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
 
 type VenueRow = { id: string; name: string };
@@ -44,6 +44,14 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [memberAddSuccess, setMemberAddSuccess] = useState<string | null>(null);
   const [isAddingMember, setIsAddingMember] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Guest player add state
+  const [guestName, setGuestName] = useState("");
+  const [guestSkill, setGuestSkill] = useState("unknown");
+  const [isAddingGuest, setIsAddingGuest] = useState(false);
+  const [guestAddError, setGuestAddError] = useState<string | null>(null);
+  const [guestAddSuccess, setGuestAddSuccess] = useState<string | null>(null);
+  const [addMode, setAddMode] = useState<"member" | "guest">("guest");
 
   // Venue add state
   const [venueName, setVenueName] = useState("");
@@ -154,6 +162,23 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       setSearchQuery("");
     }
     setIsAddingMember(false);
+  };
+
+  const handleAddGuestPlayer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guestName.trim() || isAddingGuest) return;
+    setIsAddingGuest(true);
+    setGuestAddError(null);
+    setGuestAddSuccess(null);
+    const result = await addGuestPlayerToSquad({ squadId: groupId, displayName: guestName, skillLevel: guestSkill }).catch(() => null);
+    if (!result || !result.ok) {
+      setGuestAddError(result?.message ?? "Could not add guest player. Please try again.");
+    } else {
+      setGuestAddSuccess(`"${guestName.trim()}" added as a guest player.`);
+      setGuestName("");
+      setGuestSkill("unknown");
+    }
+    setIsAddingGuest(false);
   };
 
   const handleAddVenue = async (e: React.FormEvent) => {
@@ -283,15 +308,98 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                     <path d="M19 8v6" /><path d="M22 11h-6" />
                   </svg>
                 </div>
-                <div>
+                <div style={{ flex: 1 }}>
                   <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                    Add Team Member
+                    Add Player
                   </h2>
-                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Search by name or email — they must have signed up first.</p>
+                  {/* Mode toggle */}
+                  <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.375rem" }}>
+                    {(["guest", "member"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setAddMode(mode)}
+                        style={{
+                          height: 28, padding: "0 0.75rem",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--r-pill)",
+                          background: addMode === mode ? "var(--ink-800)" : "var(--surface-sunken)",
+                          color: addMode === mode ? "var(--volt-500)" : "var(--text-3)",
+                          fontFamily: "var(--font-mono)", fontSize: "0.625rem",
+                          fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {mode === "guest" ? "⚡ Guest (no sign-up)" : "🔗 Linked Account"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              <form onSubmit={handleAddMember} style={{ display: "grid", gap: "0.625rem" }}>
+              {/* Guest player form */}
+              {addMode === "guest" && (
+                <form onSubmit={handleAddGuestPlayer} style={{ display: "grid", gap: "0.625rem" }}>
+                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>
+                    Add anyone by name — no email or account needed. Great for walk-ins and testing.
+                  </p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr minmax(130px, 160px) auto", gap: "0.5rem", alignItems: "center" }}>
+                    <input
+                      data-testid="guest-name-input"
+                      className="pb-input"
+                      type="text"
+                      placeholder="Player name (e.g. John S.)"
+                      value={guestName}
+                      onChange={e => setGuestName(e.target.value)}
+                      required
+                      style={{ height: 46, borderRadius: "var(--r-md)" }}
+                    />
+                    <select
+                      className="pb-input"
+                      value={guestSkill}
+                      onChange={e => setGuestSkill(e.target.value)}
+                      style={{ height: 46, borderRadius: "var(--r-md)" }}
+                    >
+                      <option value="unknown">Skill: Unknown</option>
+                      <option value="beginner">Beginner</option>
+                      <option value="intermediate">Intermediate</option>
+                      <option value="advanced">Advanced</option>
+                    </select>
+                    <button
+                      data-testid="guest-add-submit"
+                      type="submit"
+                      disabled={!guestName.trim() || isAddingGuest}
+                      style={{
+                        height: 46, padding: "0 1.25rem", border: "none",
+                        borderRadius: "var(--r-md)", background: "var(--ink-800)",
+                        color: "var(--volt-500)", fontWeight: 800,
+                        opacity: guestName.trim() && !isAddingGuest ? 1 : 0.5,
+                        cursor: guestName.trim() && !isAddingGuest ? "pointer" : "default",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {isAddingGuest ? "Adding…" : "Add Guest →"}
+                    </button>
+                  </div>
+                  {(guestAddError || guestAddSuccess) && (
+                    <p style={{
+                      borderRadius: "var(--r-md)", padding: "0.75rem",
+                      background: guestAddError ? "var(--danger-bg)" : "rgba(198,241,53,0.18)",
+                      color: guestAddError ? "var(--danger)" : "var(--ink-800)",
+                      fontWeight: 800, fontSize: "0.875rem",
+                    }}>
+                      {guestAddError ?? guestAddSuccess}
+                    </p>
+                  )}
+                </form>
+              )}
+
+              {/* Linked account (existing) member search form */}
+              {addMode === "member" && (
+                <form onSubmit={handleAddMember} style={{ display: "grid", gap: "0.625rem" }}>
+                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>
+                    Search by name or email — they must have signed up first.
+                  </p>
                 {/* Search input + dropdown */}
                 <div style={{ position: "relative" }}>
                   <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -422,16 +530,6 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                   </div>
                 )}
               </form>
-
-              {(memberAddError || memberAddSuccess) && (
-                <p style={{
-                  marginTop: "0.75rem", borderRadius: "var(--r-md)", padding: "0.75rem",
-                  background: memberAddError ? "var(--danger-bg)" : "rgba(198,241,53,0.18)",
-                  color: memberAddError ? "var(--danger)" : "var(--ink-800)",
-                  fontWeight: 800, fontSize: "0.875rem",
-                }}>
-                  {memberAddError ?? memberAddSuccess}
-                </p>
               )}
 
               <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
@@ -493,6 +591,17 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                         <div style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>{p.email ?? "No email"}</div>
                       </div>
                       <div style={{ display: "flex", gap: "0.375rem", alignItems: "center", flexShrink: 0 }}>
+                        {p.isGuest && (
+                          <span style={{
+                            padding: "3px 8px", borderRadius: "var(--r-pill)",
+                            background: "rgba(198,241,53,0.15)", color: "var(--ink-800)",
+                            border: "1px solid var(--volt-500)",
+                            fontSize: "0.6875rem", fontWeight: 800, letterSpacing: "0.05em",
+                            textTransform: "uppercase",
+                          }}>
+                            Guest
+                          </span>
+                        )}
                         {p.skillLevel && p.skillLevel !== "unknown" && (
                           <span style={{
                             padding: "3px 8px", borderRadius: "var(--r-pill)",

@@ -142,3 +142,51 @@ export async function addMemberToSquad(
 
   return ok({ userId: targetUser.uid });
 }
+
+// ── addGuestPlayerToSquad ─────────────────────────────────────────────────────
+// Add a name-only guest player (no Firebase account required).
+// Useful for testing and for walk-in players without smartphones.
+
+export interface AddGuestPlayerInput {
+  squadId: string;
+  displayName: string;
+  skillLevel?: string;
+}
+
+export async function addGuestPlayerToSquad(
+  input: AddGuestPlayerInput,
+): Promise<ActionResult<{ playerId: string }>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const { squadId, displayName, skillLevel = "unknown" } = input;
+
+  if (!displayName || displayName.trim().length < 1) {
+    return err("INVALID_ARGUMENT", "Player name is required");
+  }
+
+  const db = getAdminDb();
+
+  const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
+  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
+  if (!canManageSquad(callerRole)) {
+    return err("FORBIDDEN", "Only squad owners can add guest players");
+  }
+
+  // Generate a stable guest ID that won't collide with real user UIDs
+  const guestDocRef = db.collection(`groups/${squadId}/players`).doc();
+  const playerId = `guest_${guestDocRef.id}`;
+  const playerRef = db.doc(`groups/${squadId}/players/${playerId}`);
+
+  await playerRef.set({
+    userId: null,
+    displayName: displayName.trim(),
+    email: null,
+    skillLevel,
+    isGuest: true,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return ok({ playerId });
+}

@@ -4,7 +4,7 @@ import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { logEvent } from "@/lib/analytics/events";
 import { safeUnsubscribe } from "@/lib/realtime/watchWithFallback";
 import { rebalanceSession as serverRebalance } from "@/server/sessions/rebalance";
-import { updatePlayerStatus as serverUpdateStatus, addLatePlayer as serverAddLate } from "@/server/sessions/players";
+import { updatePlayerStatus as serverUpdateStatus, addLatePlayer as serverAddLate, markPlayerInjured as serverMarkInjured } from "@/server/sessions/players";
 
 export async function rebalanceSession(data: { sessionId: string; trigger?: string }) {
   const result = await serverRebalance(
@@ -25,6 +25,12 @@ export async function updatePlayerStatus(data: { sessionId: string; sessionPlaye
 
 export async function addLatePlayer(data: { sessionId: string; playerId: string; displayName: string; skillLevel?: string }) {
   const result = await serverAddLate(data.sessionId, data.playerId, data.displayName, data.skillLevel);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
+}
+
+export async function markPlayerInjured(data: { sessionId: string; sessionPlayerId: string }) {
+  const result = await serverMarkInjured(data.sessionId, data.sessionPlayerId);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }

@@ -254,3 +254,70 @@ export async function addLatePlayer(
     throw e;
   }
 }
+
+/**
+ * One-tap "Mark Injured / Step Out" action for mid-session player removal.
+ *
+ * Immediately marks the player as `left` (removing them from all future round
+ * scheduling) and writes an injury-specific audit log entry so the organiser
+ * has a clear record. Returns rebalanceRecommended: true so the UI can prompt
+ * for an immediate rebalance to fill the gap.
+ */
+export async function markPlayerInjured(
+  sessionId: string,
+  sessionPlayerId: string,
+): Promise<ActionResult<{ rebalanceRecommended: boolean }>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  if (!sessionId || !sessionPlayerId) {
+    return err("INVALID_ARGUMENT", "sessionId and sessionPlayerId are required");
+  }
+
+  const db = getAdminDb();
+
+  try {
+    const result = await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canManageSessionPlayers(role)) {
+        throw Object.assign(new Error("Must be a squad member to update player status"), { code: "FORBIDDEN" });
+      }
+
+      const playerRef = db.doc(`sessions/${sessionId}/players/${sessionPlayerId}`);
+      const playerSnap = await t.get(playerRef);
+      if (!playerSnap.exists) throw Object.assign(new Error("Session player not found"), { code: "NOT_FOUND" });
+      const player = playerSnap.data()!;
+
+      t.update(playerRef, {
+        status: "left",
+        leftAt: FieldValue.serverTimestamp(),
+        injuredAt: FieldValue.serverTimestamp(),
+      });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "player/injured",
+        details: {
+          sessionPlayerId,
+          displayName: player.displayName ?? sessionPlayerId,
+          reason: "injury_or_step_out",
+        },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      return { rebalanceRecommended: session.status === "active" || session.status === "paused" };
+    });
+
+    return ok(result);
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    throw e;
+  }
+}

@@ -26,7 +26,8 @@ async function getLeaderboard(): Promise<PlayerRow[]> {
 
   return snap.docs
     .map((d) => ({ uid: d.id, ...(d.data() as Omit<PlayerRow, "uid">) }))
-    .filter((p) => p.totalGames > 0);
+    // Guest stats are day-of-session only (see submitScore) — never shown here.
+    .filter((p) => p.totalGames > 0 && !p.isGuest);
 }
 
 export default async function LeaderboardPage() {

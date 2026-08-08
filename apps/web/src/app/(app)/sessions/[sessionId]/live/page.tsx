@@ -3,14 +3,14 @@
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, advanceRound, watchRounds, watchMatches, watchLeaderboard } from "@/lib/sessions/live";
-import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, moveMatch, disableCourt, watchGenerationRuns } from "@/lib/sessions/rebalance";
+import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, moveMatch, disableCourt, watchGenerationRuns, markPlayerInjured } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
 import { canAdvanceRound, canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
-import { enterScore } from "@/lib/sessions/scoring";
+import { enterScore, finishGameWithoutScore } from "@/lib/sessions/scoring";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
 
 function titleCase(value: string) {
@@ -185,6 +185,25 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           await handleRebalance(status === "left" || status === "removed" || status === "no_show" ? "player_removed" : "settings_changed");
         }
       }
+    } catch (e: any) { setActionError(e.message); }
+  };
+
+  const handleMarkInjured = async (sessionPlayerId: string, displayName: string) => {
+    if (!confirm(`Mark ${displayName} as Injured / Step Out? They will be removed from upcoming courts.`)) return;
+    setActionError(null);
+    try {
+      const res = await markPlayerInjured({ sessionId, sessionPlayerId });
+      const data = res.data;
+      if (data.rebalanceRecommended) {
+        await handleRebalance("player_removed");
+      }
+    } catch (e: any) { setActionError(e.message); }
+  };
+
+  const handleFinishGame = async (matchId: string) => {
+    setActionError(null);
+    try {
+      await finishGameWithoutScore(sessionId, session.currentRoundNumber, matchId);
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -382,16 +401,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               ...(latestFairnessScore !== null ? [{ label: "Fairness", value: `${Math.round(latestFairnessScore * 100)}%` }] : []),
             ].map((stat) => (
               <div key={stat.label} data-testid={stat.label === "Fairness" ? "fairness-chip" : undefined} style={{
-                background: "rgba(246,248,244,0.08)",
-                border: "1px solid rgba(246,248,244,0.12)",
+                background: stat.label === "Fairness"
+                  ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "rgba(198,241,53,0.18)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "rgba(255,200,50,0.18)" : "rgba(255,80,80,0.18)")
+                  : "rgba(246,248,244,0.08)",
+                border: stat.label === "Fairness"
+                  ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "1px solid rgba(198,241,53,0.35)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "1px solid rgba(255,200,50,0.35)" : "1px solid rgba(255,80,80,0.35)")
+                  : "1px solid rgba(246,248,244,0.12)",
                 borderRadius: "var(--r-xl)",
                 padding: "1rem",
               }}>
-                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: "var(--volt-500)", lineHeight: 1 }}>
+                <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: stat.label === "Fairness" ? (latestFairnessScore !== null && latestFairnessScore >= 0.85 ? "var(--volt-500)" : latestFairnessScore !== null && latestFairnessScore >= 0.6 ? "#ffc832" : "#ff6060") : "var(--volt-500)", lineHeight: 1 }}>
                   {stat.value}
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 6 }}>
-                  {stat.label}
+                  {stat.label === "Fairness" ? "🟢 Rotation Health" : stat.label}
                 </div>
               </div>
             ))}
@@ -563,7 +586,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   {canManageLive && !isLocked && (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem", maxWidth: "100%" }}>
                       <select
-                        value={swapSelections[key] ?? ""}
+                        value={swapSelections[`${m.id}:${p.playerId}`] ?? ""}
                         onChange={(e) => setSwapSelections((prev) => ({ ...prev, [key]: e.target.value }))}
                         className="pb-input"
                         style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem" }}
@@ -675,6 +698,30 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   </div>
                 )}
 
+                {/* One-tap Finish Game button — optional score entry */}
+                {canScore && !isLocked && (
+                  <div style={{ marginBottom: "0.625rem" }}>
+                    <button
+                      data-testid="finish-game-btn"
+                      onClick={() => handleFinishGame(m.id)}
+                      style={{
+                        width: "100%",
+                        height: 44,
+                        border: "2px solid var(--volt-500)",
+                        borderRadius: "var(--r-md)",
+                        background: "transparent",
+                        color: "var(--volt-500)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontSize: "0.9375rem",
+                        letterSpacing: "0.02em",
+                      }}
+                    >
+                      ✓ Finish Game (No Score)
+                    </button>
+                  </div>
+                )}
+
                 {canScore && !isLocked && session.scoringMode === "points" ? (
                   <form onSubmit={(e) => submitScorePoints(m.id, e)} style={{ display: "grid", gridTemplateColumns: "80px auto 80px minmax(120px, auto)", gap: "0.5rem", alignItems: "center" }}>
                     <input data-testid="score-team-a-input" name="teamA" type="number" required defaultValue={m.scorePayload?.teamAScore} className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }} />
@@ -765,9 +812,25 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 <div key={p.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.75rem", alignItems: "center", padding: "0.75rem", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface-sunken)" }}>
                   <span style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName} <span style={{ color: "var(--text-3)", fontWeight: 700 }}>({titleCase(p.status)})</span></span>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.375rem", justifyContent: "flex-end" }}>
+                    <button
+                      data-testid="injured-btn"
+                      onClick={() => handleMarkInjured(p.id, p.displayName)}
+                      style={{
+                        height: 34,
+                        padding: "0 0.625rem",
+                        border: "2px solid var(--danger)",
+                        borderRadius: "var(--r-md)",
+                        background: "transparent",
+                        color: "var(--danger)",
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      🚑 Injured / Step Out
+                    </button>
                     <button onClick={() => handlePlayerStatus(p.id, "waiting")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem" }}>Waiting</button>
                     <button onClick={() => handlePlayerStatus(p.id, "left")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem" }}>Left</button>
-                    <button onClick={() => handlePlayerStatus(p.id, "no_show")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem", color: "var(--danger)" }}>No Show</button>
                     <button onClick={() => handlePlayerStatus(p.id, "removed")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem", color: "var(--danger)" }}>Remove</button>
                   </div>
                 </div>

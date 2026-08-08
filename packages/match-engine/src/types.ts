@@ -82,6 +82,8 @@ export interface FairnessMetadata {
   roundsGenerated: number;
   /** DELTA_SPEC minor: 1 - normalised penalty, clamped 0..1. Informational only. */
   fairnessScore: number;
+  /** fairnessPercent: fairnessScore * 100, rounded to nearest integer. Shown in host UI health meter. */
+  fairnessPercent: number;
   minGamesPerPlayer: number;
   maxGamesPerPlayer: number;
   notes: string[];

@@ -5,5 +5,5 @@ export * from "./types.js";
 export { computeFutureRoundCount, maxPlayersPerRound } from "./rounds.js";
 export { mulberry32, seededOrder } from "./rng.js";
 export { generateSchedule, ALGORITHM_VERSION } from "./generate.js";
-export { pairKey } from "./state.js";
+export { pairKey, recordSitOut } from "./state.js";
 export { seedStateFromPriors, normalizePriorGames } from "./priors.js";

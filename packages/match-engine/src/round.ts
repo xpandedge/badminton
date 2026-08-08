@@ -1,6 +1,6 @@
 import type { EngineCourt, EnginePlayer, GeneratedMatch, GeneratedSitOut, SitOutReason } from "./types.js";
 import { PLAYERS_PER_MATCH } from "./types.js";
-import { recordMatch, type EngineState } from "./state.js";
+import { recordMatch, recordSitOut, type EngineState } from "./state.js";
 import { bestTeamSplit, foursomePenalty, type FoursomePlayer } from "./penalty.js";
 import { selectSitOuts } from "./sitouts.js";
 
@@ -13,7 +13,7 @@ export function buildRound(
   order: Map<string, number> = new Map(),
 ): RoundResult {
   const byId = new Map(players.map((p) => [p.playerId, p] as const));
-  const { playing, sitting } = selectSitOuts(state, players.map((p) => p.playerId), courts.length, order);
+  const { playing, sitting } = selectSitOuts(state, players.map((p) => p.playerId), courts.length, order, roundNumber);
 
   const pool = new Set(playing);
   const matches: GeneratedMatch[] = [];
@@ -31,7 +31,7 @@ export function buildRound(
     const court = courtsToUse[m]!;
     matches.push({ roundNumber, courtId: court.courtId, matchNumber: m + 1, teamA: split.teamA, teamB: split.teamB });
   }
-  for (const id of sitting) state.sitOuts.set(id, (state.sitOuts.get(id) ?? 0) + 1);
+  for (const id of sitting) recordSitOut(state, id, roundNumber);
 
   // DELTA_SPEC D2/§23: when more available players than court capacity, the
   // forced sit-outs are "overflow"; otherwise they're the even-rotation remainder.

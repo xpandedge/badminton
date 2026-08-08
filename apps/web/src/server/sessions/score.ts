@@ -100,7 +100,10 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
 
         t.set(playerRefs[i]!, pStats, { merge: true });
         t.set(lbRefs[i]!, lbStats, { merge: true });
-        if (globalDocs[i]?.exists) {
+        // Guests only ever show up on the per-session leaderboard (above) — never
+        // the permanent global one, and their stats must not carry into future sessions.
+        const isGuestGlobal = (globalDocs[i]?.data() as any)?.isGuest === true;
+        if (globalDocs[i]?.exists && !isGuestGlobal) {
           t.update(globalRefs[i]!, { ...buildGlobalUpdate(gStats), lastPlayedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
         }
         // If global doc doesn't exist yet (sign-in race), skip — ensureGlobalPlayer handles it
@@ -215,4 +218,106 @@ function buildGlobalUpdate(stats: Record<string, any>): Record<string, any> {
     totalPointsAgainst: stats.totalPointsAgainst ?? 0,
     totalPointDiff: stats.totalPointDiff ?? 0,
   };
+}
+
+// ── Optional Score Entry: One-tap "Finish Game" ───────────────────────────────
+
+export interface CompleteMatchInput {
+  sessionId: string;
+  roundNumber: number;
+  matchId: string;
+}
+
+/**
+ * Completes a match without requiring any score input.
+ *
+ * Marks the match as `completed` and locked so it is treated correctly by
+ * the rolling court queue (future rebalances will preserve it as a locked
+ * match). Each player's `gamesPlayed` count is incremented for rotation
+ * fairness tracking. No winner, no points — just "game done, next up".
+ */
+export async function completeMatchWithoutScore(
+  input: CompleteMatchInput,
+): Promise<ActionResult<void>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const { sessionId, roundNumber, matchId } = input;
+  if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
+  if (typeof roundNumber !== "number" || roundNumber < 1) {
+    return err("INVALID_ARGUMENT", "roundNumber must be a positive integer");
+  }
+
+  const db = getAdminDb();
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const session = sessionSnap.data()!;
+
+      const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
+      if (!canEnterScore(role)) {
+        throw Object.assign(new Error("Must be a squad member to complete matches"), { code: "FORBIDDEN" });
+      }
+
+      if (session.status !== "active" && session.status !== "paused") {
+        throw Object.assign(
+          new Error("Scores can only be entered while the session is active"),
+          { code: "FAILED_PRECONDITION" },
+        );
+      }
+      if (roundNumber > (session.currentRoundNumber || 0)) {
+        throw Object.assign(new Error("Cannot complete a future round match"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const matchRef = db.doc(`sessions/${sessionId}/rounds/round_${roundNumber}/matches/${matchId}`);
+      const matchSnap = await t.get(matchRef);
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
+      const match = matchSnap.data()!;
+
+      if (match.status === "cancelled" || match.status === "completed") {
+        throw Object.assign(new Error("Match is already completed or cancelled"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
+      const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
+      const allPlayerIds = [...teamAIds, ...teamBIds];
+
+      // Increment gamesPlayed for each participant (no wins/losses — score-free)
+      for (const pid of allPlayerIds) {
+        const playerRef = db.doc(`sessions/${sessionId}/players/${pid}`);
+        const lbRef = db.doc(`sessions/${sessionId}/leaderboard/${pid}`);
+        const [pSnap, lbSnap] = await Promise.all([t.get(playerRef), t.get(lbRef)]);
+        const pData = pSnap.data() ?? {};
+        const lbData = lbSnap.data() ?? {};
+        t.set(playerRef, { ...pData, gamesPlayed: (pData.gamesPlayed || 0) + 1 }, { merge: true });
+        t.set(lbRef, { ...lbData, gamesPlayed: (lbData.gamesPlayed || 0) + 1 }, { merge: true });
+      }
+
+      t.update(matchRef, {
+        status: "completed",
+        isLocked: true,
+        completedAt: FieldValue.serverTimestamp(),
+        scorePayload: null,
+        winnerTeam: null,
+      });
+
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: user.uid,
+        action: "score/completed_without_score",
+        details: { matchId, roundNumber },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
+    throw e;
+  }
+
+  return ok(undefined);
 }

@@ -46,6 +46,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
+  const [showScoreInput, setShowScoreInput] = useState<Record<string, boolean>>({});
 
   const leaderboardLogged = useRef(false);
   const { user } = useAuth();
@@ -318,13 +319,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           <span style={{
             padding: "4px 8px",
             borderRadius: "var(--r-pill)",
-            background: isLocked ? "var(--n-200)" : matchTone.bg,
-            color: isLocked ? "var(--text-3)" : matchTone.fg,
+            background: m.winnerTeam ? "rgba(198,241,53,0.18)" : isLocked ? "var(--n-200)" : matchTone.bg,
+            color: m.winnerTeam ? "var(--volt-600)" : isLocked ? "var(--text-3)" : matchTone.fg,
             fontSize: "0.75rem",
             fontWeight: 900,
             whiteSpace: "nowrap",
           }}>
-            {isLocked ? "Locked" : titleCase(m.status)}
+            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Locked" : titleCase(m.status)}
           </span>
         </div>
         <div style={{
@@ -362,19 +363,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           const a = pts?.a ? Number(pts.a) : undefined;
           const b = pts?.b ? Number(pts.b) : undefined;
           const hasValidPoints = typeof a === "number" && !Number.isNaN(a) && typeof b === "number" && !Number.isNaN(b) && a !== b;
+          const scoreOpen = showScoreInput[m.id];
           return (
             <div style={{ display: "grid", gap: "0.5rem" }}>
-              {session!.scoringMode === "points" && (
+              {session!.scoringMode === "points" && scoreOpen && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "0.5rem", alignItems: "center" }}>
                   <input
-                    data-testid="score-team-a-input" type="number" placeholder="Points (optional)"
+                    data-testid="score-team-a-input" type="number" placeholder="Points" autoFocus
                     value={pts?.a ?? ""}
                     onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: e.target.value, b: prev[m.id]?.b ?? "" } }))}
                     className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
                   />
                   <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
                   <input
-                    data-testid="score-team-b-input" type="number" placeholder="Points (optional)"
+                    data-testid="score-team-b-input" type="number" placeholder="Points"
                     value={pts?.b ?? ""}
                     onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: prev[m.id]?.a ?? "", b: e.target.value } }))}
                     className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
@@ -390,6 +392,17 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   <button data-testid="score-winner-a" onClick={() => submitWinner(m.id, "A")} style={primaryActionStyle}>A Wins</button>
                   <button data-testid="score-winner-b" onClick={() => submitWinner(m.id, "B")} style={primaryActionStyle}>B Wins</button>
                 </div>
+              )}
+              {session!.scoringMode === "points" && !scoreOpen && (
+                <button
+                  onClick={() => setShowScoreInput((prev) => ({ ...prev, [m.id]: true }))}
+                  style={{
+                    display: "block", margin: "0 auto", border: "none", background: "transparent",
+                    color: "var(--text-3)", fontWeight: 700, cursor: "pointer", fontSize: "0.75rem", textDecoration: "underline",
+                  }}
+                >
+                  + Enter exact score
+                </button>
               )}
             </div>
           );

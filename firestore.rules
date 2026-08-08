@@ -89,6 +89,13 @@ service cloud.firestore {
         allow write: if isSuperAdmin() || isOrganiser(); // organiser+ manages group player roster
       }
 
+      // Self-join requests: any member can see pending requests; all writes
+      // (create/approve/reject) go through server actions (admin SDK).
+      match /joinRequests/{reqId} {
+        allow read: if isSuperAdmin() || isMember();
+        allow write: if false;
+      }
+
       match /venues/{venueId} {
         allow read: if isSuperAdmin() || isMember();
         allow write: if isSuperAdmin() || isOrganiser();

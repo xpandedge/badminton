@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState, use } from "react";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { canManageGroup } from "@picklebaddies/domain";
-import { getGroup, watchGroupMembers } from "@/lib/groups/groups";
+import { getGroup, watchGroupMembers, watchJoinRequests, watchGroupDoc, type JoinRequest } from "@/lib/groups/groups";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { addVenue, addCourt, watchCourts, watchVenues } from "@/lib/groups/venues";
 import { type GroupRole } from "@picklebaddies/domain";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
-import { addMemberToSquad, addGuestPlayerToSquad } from "@/server/squads/actions";
+import { addMemberToSquad, addGuestPlayerToSquad, approveJoinRequest, rejectJoinRequest, rotateInviteCode } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
 
 type VenueRow = { id: string; name: string };
@@ -63,6 +63,36 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [sessionFilter, setSessionFilter] = useState<"upcoming" | "active" | "past">("active");
   const [activeTab, setActiveTab] = useState<"members" | "sessions">("members");
 
+  // Self-join: invite code + incoming requests
+  const [inviteCode, setInviteCode] = useState<string | undefined>(undefined);
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [resolvingReq, setResolvingReq] = useState<string | null>(null);
+
+  const handleCopyCode = async () => {
+    if (!inviteCode) return;
+    await navigator.clipboard?.writeText(inviteCode);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 1500);
+  };
+  const handleRotateCode = async () => {
+    setRotating(true);
+    const res = await rotateInviteCode(groupId).catch(() => null);
+    if (res?.ok) setInviteCode(res.data.inviteCode);
+    setRotating(false);
+  };
+  const handleApprove = async (uid: string) => {
+    setResolvingReq(uid);
+    await approveJoinRequest(groupId, uid).catch(() => null);
+    setResolvingReq(null);
+  };
+  const handleReject = async (uid: string) => {
+    setResolvingReq(uid);
+    await rejectJoinRequest(groupId, uid).catch(() => null);
+    setResolvingReq(null);
+  };
+
   useEffect(() => {
     if (!groupId) return;
     void getGroup(groupId).then((g) => {
@@ -73,12 +103,16 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     const unsubMembers = watchGroupMembers(groupId, (m) => setMembers(m as unknown as MemberRow[]), () => setMembers([]));
     const unsubVenues = watchVenues(groupId, setVenues, () => setVenues([]));
     const unsubSessions = watchGroupSessions(groupId, setSessions, () => setSessions([]));
+    const unsubGroupDoc = watchGroupDoc(groupId, (g) => setInviteCode(g?.inviteCode), () => {});
+    const unsubRequests = watchJoinRequests(groupId, setJoinRequests, () => setJoinRequests([]));
 
     return () => {
       unsubPlayers();
       unsubMembers();
       unsubVenues();
       unsubSessions();
+      unsubGroupDoc();
+      unsubRequests();
     };
   }, [groupId]);
 
@@ -290,6 +324,66 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
       {activeTab === "members" && (
         <>
+          {/* Pending join requests — any member can approve/reject */}
+          {joinRequests.length > 0 && (
+            <section data-testid="join-requests" style={{
+              background: "var(--surface)", border: "1px solid var(--volt-500)",
+              borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
+              animation: "pb-rise 400ms 40ms var(--ease-out) both",
+            }}>
+              <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.25rem" }}>
+                Join requests <span style={{ color: "var(--volt-600)" }}>({joinRequests.length})</span>
+              </h2>
+              <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>People asking to join this squad.</p>
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                {joinRequests.map((r) => (
+                  <div key={r.userId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "0.5rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem 0.75rem" }}>
+                    <span style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.displayName}</span>
+                    <button
+                      onClick={() => handleApprove(r.userId)}
+                      disabled={resolvingReq === r.userId}
+                      style={{ height: 34, padding: "0 0.75rem", border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer", fontSize: "0.8125rem" }}
+                    >
+                      {resolvingReq === r.userId ? "…" : "Approve"}
+                    </button>
+                    <button
+                      onClick={() => handleReject(r.userId)}
+                      disabled={resolvingReq === r.userId}
+                      style={{ height: 34, padding: "0 0.625rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--danger)", fontWeight: 800, cursor: "pointer", fontSize: "0.8125rem" }}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Invite code — share to let players join directly */}
+          {inviteCode && (
+            <section style={{
+              background: "var(--surface)", border: "1px solid var(--border)",
+              borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
+              animation: "pb-rise 400ms 50ms var(--ease-out) both",
+            }}>
+              <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>Invite code</h2>
+              <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>Share this code — anyone who enters it joins instantly.</p>
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                <code style={{ fontFamily: "var(--font-mono)", fontSize: "1.5rem", fontWeight: 800, letterSpacing: "0.15em", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "0.5rem 1rem", color: "var(--text-1)" }}>
+                  {inviteCode}
+                </code>
+                <button onClick={handleCopyCode} style={{ height: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, cursor: "pointer" }}>
+                  {copiedCode ? "Copied!" : "Copy"}
+                </button>
+                {canManageGroup(role) && (
+                  <button onClick={handleRotateCode} disabled={rotating} style={{ height: 44, padding: "0 0.875rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-2)", fontWeight: 800, cursor: "pointer", fontSize: "0.8125rem" }}>
+                    {rotating ? "…" : "New code"}
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* Add member — searchable combobox, owner only */}
           {canManageGroup(role) && (
             <section style={{

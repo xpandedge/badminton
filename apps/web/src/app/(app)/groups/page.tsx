@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth/useAuth";
 import { watchUserGroups } from "@/lib/groups/groups";
-import { createSquad } from "@/server/squads/actions";
+import { createSquad, joinSquadByCode, searchSquads, requestToJoinSquad, type SquadSearchResult } from "@/server/squads/actions";
 
 export default function GroupsPage() {
   const { user } = useAuth();
@@ -15,6 +15,45 @@ export default function GroupsPage() {
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Join a squad — invite code + name search
+  const [joinCode, setJoinCode] = useState("");
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [squadQuery, setSquadQuery] = useState("");
+  const [squadResults, setSquadResults] = useState<SquadSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [requestedIds, setRequestedIds] = useState<Record<string, boolean>>({});
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleJoinByCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joinCode.trim() || joinBusy) return;
+    setJoinBusy(true);
+    setJoinError(null);
+    const res = await joinSquadByCode(joinCode).catch(() => null);
+    setJoinBusy(false);
+    if (!res || !res.ok) { setJoinError(res?.message ?? "Could not join. Check the code."); return; }
+    router.push(`/groups/${res.data.squadId}`);
+  };
+
+  const runSquadSearch = (q: string) => {
+    setSquadQuery(q);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (q.trim().length < 2) { setSquadResults([]); return; }
+    searchDebounce.current = setTimeout(async () => {
+      setSearching(true);
+      const res = await searchSquads(q).catch(() => null);
+      setSearching(false);
+      if (res?.ok) setSquadResults(res.data);
+    }, 300);
+  };
+
+  const handleRequest = async (squadId: string) => {
+    setRequestedIds((prev) => ({ ...prev, [squadId]: true }));
+    const res = await requestToJoinSquad(squadId).catch(() => null);
+    if (res?.ok && res.data.status === "joined") router.push(`/groups/${squadId}`);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -258,12 +297,73 @@ export default function GroupsPage() {
         </section>
 
         <section style={{
+          display: "grid", gap: "1rem", alignContent: "start",
+          animation: "pb-rise 400ms 110ms var(--ease-out) both",
+        }}>
+
+        {/* Join a squad */}
+        <div style={{
+          background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
+        }}>
+          <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>Join a squad</h2>
+          <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>Have a code, or find one by name.</p>
+
+          <form onSubmit={handleJoinByCode} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.5rem", marginBottom: "0.875rem" }}>
+            <input
+              className="pb-input"
+              value={joinCode}
+              onChange={(e) => { setJoinCode(e.target.value); setJoinError(null); }}
+              placeholder="Invite code"
+              style={{ textTransform: "uppercase", letterSpacing: "0.1em" }}
+            />
+            <button type="submit" disabled={!joinCode.trim() || joinBusy} className="pb-btn pb-btn-volt" style={{ width: "auto", padding: "0 1.25rem" }}>
+              {joinBusy ? "…" : "Join"}
+            </button>
+          </form>
+          {joinError && <p style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 700, marginBottom: "0.5rem" }}>{joinError}</p>}
+
+          <div className="pb-divider" style={{ margin: "0.5rem 0" }}>or search</div>
+
+          <input
+            className="pb-input"
+            value={squadQuery}
+            onChange={(e) => runSquadSearch(e.target.value)}
+            placeholder="Search squads by name…"
+          />
+          {squadQuery.trim().length >= 2 && (
+            <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.625rem" }}>
+              {searching && <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", fontFamily: "var(--font-mono)" }}>Searching…</p>}
+              {!searching && squadResults.length === 0 && <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>No squads match that name.</p>}
+              {squadResults.map((s) => {
+                const requested = s.relation === "requested" || requestedIds[s.squadId];
+                return (
+                  <div key={s.squadId} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.5rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem 0.75rem" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                      <div style={{ color: "var(--text-3)", fontSize: "0.75rem" }}>{s.memberCount} member{s.memberCount !== 1 ? "s" : ""}</div>
+                    </div>
+                    {s.relation === "member" ? (
+                      <Link href={`/groups/${s.squadId}`} className="pb-btn pb-btn-ghost" style={{ width: "auto", padding: "0 0.875rem", height: 36, fontSize: "0.8125rem" }}>Open</Link>
+                    ) : requested ? (
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)", padding: "0 0.5rem" }}>Requested</span>
+                    ) : (
+                      <button onClick={() => handleRequest(s.squadId)} style={{ height: 36, padding: "0 0.875rem", border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, cursor: "pointer", fontSize: "0.8125rem" }}>Request</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Create squad */}
+        <div style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: "var(--r-xl)",
           padding: "1rem",
           boxShadow: "var(--shadow-sm)",
-          animation: "pb-rise 400ms 110ms var(--ease-out) both",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
             <div style={{
@@ -320,6 +420,7 @@ export default function GroupsPage() {
               {isSubmitting ? "Creating..." : "Create Squad"}
             </button>
           </form>
+        </div>
         </section>
       </main>
     </div>

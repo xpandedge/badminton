@@ -84,6 +84,39 @@ export async function createTeam(input: { name: string; description?: string }):
   return ref.id;
 }
 
+export interface JoinRequest {
+  userId: string;
+  displayName: string;
+  email: string | null;
+  status: string;
+}
+
+/** Watches pending self-join requests for a squad (members only, per rules). */
+export function watchJoinRequests(
+  groupId: string,
+  cb: (requests: JoinRequest[]) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  const { db } = getFirebaseServices();
+  const unsub = onSnapshot(query(collection(db, `groups/${groupId}/joinRequests`)), (snap) => {
+    cb(snap.docs.map((d) => ({ userId: d.id, ...(d.data() as Omit<JoinRequest, "userId">) })));
+  }, onError);
+  return () => safeUnsubscribe(unsub);
+}
+
+/** Watches the group doc itself (name + live invite code). */
+export function watchGroupDoc(
+  groupId: string,
+  cb: (data: { name: string; inviteCode?: string } | null) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  const { db } = getFirebaseServices();
+  const unsub = onSnapshot(doc(db, "groups", groupId), (snap) => {
+    cb(snap.exists() ? (snap.data() as { name: string; inviteCode?: string }) : null);
+  }, onError);
+  return () => safeUnsubscribe(unsub);
+}
+
 export function watchGroupMembers(
   groupId: string,
   cb: (members: GroupMember[]) => void,

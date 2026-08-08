@@ -46,7 +46,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
-  const [showScoreInput, setShowScoreInput] = useState<Record<string, boolean>>({});
 
   const leaderboardLogged = useRef(false);
   const { user } = useAuth();
@@ -363,13 +362,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           const a = pts?.a ? Number(pts.a) : undefined;
           const b = pts?.b ? Number(pts.b) : undefined;
           const hasValidPoints = typeof a === "number" && !Number.isNaN(a) && typeof b === "number" && !Number.isNaN(b) && a !== b;
-          const scoreOpen = showScoreInput[m.id];
           return (
             <div style={{ display: "grid", gap: "0.5rem" }}>
-              {session!.scoringMode === "points" && scoreOpen && (
+              {session!.scoringMode === "points" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "0.5rem", alignItems: "center" }}>
                   <input
-                    data-testid="score-team-a-input" type="number" placeholder="Points" autoFocus
+                    data-testid="score-team-a-input" type="number" placeholder="Points"
                     value={pts?.a ?? ""}
                     onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: e.target.value, b: prev[m.id]?.b ?? "" } }))}
                     className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
@@ -392,17 +390,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   <button data-testid="score-winner-a" onClick={() => submitWinner(m.id, "A")} style={primaryActionStyle}>A Wins</button>
                   <button data-testid="score-winner-b" onClick={() => submitWinner(m.id, "B")} style={primaryActionStyle}>B Wins</button>
                 </div>
-              )}
-              {session!.scoringMode === "points" && !scoreOpen && (
-                <button
-                  onClick={() => setShowScoreInput((prev) => ({ ...prev, [m.id]: true }))}
-                  style={{
-                    display: "block", margin: "0 auto", border: "none", background: "transparent",
-                    color: "var(--text-3)", fontWeight: 700, cursor: "pointer", fontSize: "0.75rem", textDecoration: "underline",
-                  }}
-                >
-                  + Enter exact score
-                </button>
               )}
             </div>
           );

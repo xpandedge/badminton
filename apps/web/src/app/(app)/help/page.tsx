@@ -730,11 +730,10 @@ export default function HelpPage() {
           }}
         >
           <aside
+            className="pb-help-aside"
             style={{
               display: "grid",
               gap: "0.875rem",
-              position: "sticky",
-              top: 72,
             }}
           >
             <div

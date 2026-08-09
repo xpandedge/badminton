@@ -303,7 +303,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         </div>
       </header>
 
-      <main style={{ flex: 1, paddingBottom: 84 }}>
+      <main style={{ flex: 1, paddingBottom: "calc(68px + env(safe-area-inset-bottom) + 24px)" }}>
         {children}
       </main>
 

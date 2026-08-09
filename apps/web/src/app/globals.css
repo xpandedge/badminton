@@ -540,3 +540,10 @@ button, input, textarea, select { font-family: inherit; }
   .pb-booking-actions { justify-content: stretch; }
   .pb-booking-actions > * { flex: 1; }
 }
+
+/* Help guide sidebar: static (stacked) on mobile so it can't float over the
+   guide as you scroll; sticky only once the two-column layout kicks in. */
+.pb-help-aside { position: static; }
+@media (min-width: 720px) {
+  .pb-help-aside { position: sticky; top: 72px; }
+}

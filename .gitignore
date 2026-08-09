@@ -7,7 +7,7 @@ dist/
 build/
 .next/
 out/
-# lib/
+functions/lib/
 *.tsbuildinfo
 
 # env / secrets

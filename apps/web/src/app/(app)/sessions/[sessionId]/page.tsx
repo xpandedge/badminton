@@ -315,6 +315,19 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
         </div>
       </section>
 
+      {/* Court booking — links out to venue booking pages */}
+      {isGroupMember && (
+        <section className="pb-card pb-session-booking-card">
+          <div>
+            <span className="pb-mono-label">Need a court?</span>
+            <p>Book a court at a Brisbane venue for this session.</p>
+          </div>
+          <div className="pb-booking-actions">
+            <a href="/bookings" className="pb-secondary-action">Book a court ↗</a>
+          </div>
+        </section>
+      )}
+
       {/* Score Link + Courts row */}
       <section style={{
         display: "grid",

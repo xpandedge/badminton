@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/Logo";
 
 export default function Home() {
   return (
@@ -34,43 +35,14 @@ export default function Home() {
               position: "absolute",
               inset: 0,
               backgroundImage:
-                "repeating-linear-gradient(45deg, rgba(198,241,53,0.07) 0 1px, transparent 1px 18px), repeating-linear-gradient(-45deg, rgba(198,241,53,0.07) 0 1px, transparent 1px 18px)",
+                "repeating-linear-gradient(45deg, rgba(155,232,112,0.07) 0 1px, transparent 1px 18px), repeating-linear-gradient(-45deg, rgba(155,232,112,0.07) 0 1px, transparent 1px 18px)",
               pointerEvents: "none",
             }}
           />
 
           {/* Logo row */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.625rem", marginBottom: "1.75rem" }}>
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: "var(--r-md)",
-                background: "var(--volt-500)",
-                display: "grid",
-                placeItems: "center",
-                flexShrink: 0,
-              }}
-            >
-              <svg width="22" height="22" viewBox="0 0 40 40" fill="none">
-                <rect x="5" y="3" width="19" height="25" rx="9" transform="rotate(-15 14 15)" fill="none" stroke="#16241C" strokeWidth="3" />
-                <circle cx="28" cy="28" r="8" fill="#16241C" />
-                <circle cx="26" cy="26" r="3" fill="#C6F135" />
-              </svg>
-            </div>
-            <span
-              style={{
-                fontFamily: "var(--font-display)",
-                fontWeight: 900,
-                fontSize: "1.0625rem",
-                color: "var(--n-50)",
-                textTransform: "uppercase",
-                letterSpacing: "-0.01em",
-                lineHeight: 1,
-              }}
-            >
-              Pickle<span style={{ color: "var(--volt-500)" }}>Baddies</span>
-            </span>
+          <div style={{ marginBottom: "1.75rem" }}>
+            <Logo variant="full" theme="dark" size={44} animated showKicker />
           </div>
 
           {/* Headline */}
@@ -86,10 +58,10 @@ export default function Home() {
               marginBottom: "1rem",
             }}
           >
-            Session<br />
-            <span style={{ color: "var(--volt-500)" }}>Chaos</span>
+            Games on.<br />
+            <span style={{ color: "#9BE870" }}>Zero</span>
             <br />
-            Killer.
+            faff.
           </div>
 
           <p
@@ -102,7 +74,7 @@ export default function Home() {
               marginBottom: "1.5rem",
             }}
           >
-            Auto-balance teams, track live scores, and rebalance without touching completed games.
+            Schedule sessions, auto-balance teams, track live scores — and stop managing it all in WhatsApp.
           </p>
 
           {/* Sport tags */}
@@ -114,12 +86,12 @@ export default function Home() {
                 gap: 6,
                 padding: "5px 12px 5px 9px",
                 borderRadius: "var(--r-pill)",
-                background: "rgba(198,241,53,0.12)",
-                color: "var(--volt-300)",
+                background: "rgba(155,232,112,0.12)",
+                color: "#9BE870",
                 fontFamily: "var(--font-body)",
                 fontSize: 13,
                 fontWeight: 700,
-                border: "1px solid rgba(198,241,53,0.22)",
+                border: "1px solid rgba(155,232,112,0.22)",
               }}
             >
               ⚡ Pickleball

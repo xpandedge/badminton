@@ -54,7 +54,6 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [isAddingGuest, setIsAddingGuest] = useState(false);
   const [guestAddError, setGuestAddError] = useState<string | null>(null);
   const [guestAddSuccess, setGuestAddSuccess] = useState<string | null>(null);
-  const [addMode, setAddMode] = useState<"member" | "guest">("guest");
 
   // Venue add state
   const [venueName, setVenueName] = useState("");
@@ -608,40 +607,20 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                 </div>
                 <div style={{ flex: 1 }}>
                   <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                    Add Player
+                    Add Guest Player
                   </h2>
-                  {/* Mode toggle */}
-                  <div style={{ display: "flex", gap: "0.375rem", marginTop: "0.375rem" }}>
-                    {(["guest", "member"] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setAddMode(mode)}
-                        style={{
-                          height: 28, padding: "0 0.75rem",
-                          border: "1px solid var(--border)",
-                          borderRadius: "var(--r-pill)",
-                          background: addMode === mode ? "var(--ink-800)" : "var(--surface-sunken)",
-                          color: addMode === mode ? "var(--volt-500)" : "var(--text-3)",
-                          fontFamily: "var(--font-mono)", fontSize: "0.625rem",
-                          fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {mode === "guest" ? "⚡ Guest (no sign-up)" : "🔗 Linked Account"}
-                      </button>
-                    ))}
-                  </div>
+                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                    Add a guest by name. No signup required.
+                  </p>
                 </div>
               </div>
 
               {/* Guest player form */}
-              {addMode === "guest" && (
-                <form onSubmit={handleAddGuestPlayer} style={{ display: "grid", gap: "0.625rem" }}>
+              <form onSubmit={handleAddGuestPlayer} style={{ display: "grid", gap: "0.625rem" }}>
                   <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>
-                    Add anyone by name — no email or account needed. Great for walk-ins and testing.
+                    Regular members must sign up to appear in rankings and keep their stats.
                   </p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr minmax(130px, 160px) auto", gap: "0.5rem", alignItems: "center" }}>
+                  <div className="pb-guest-add-form">
                     <input
                       data-testid="guest-name-input"
                       className="pb-input"
@@ -689,14 +668,13 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                       {guestAddError ?? guestAddSuccess}
                     </p>
                   )}
-                </form>
-              )}
+              </form>
 
               {/* Linked account (existing) member search form */}
-              {addMode === "member" && (
+              {false && selectedUser && (
                 <form onSubmit={handleAddMember} style={{ display: "grid", gap: "0.625rem" }}>
                   <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>
-                    Search by name or email — they must have signed up first.
+                    Add someone who already has a DuoRally account so their stats stay linked.
                   </p>
                 {/* Search input + dropdown */}
                 <div style={{ position: "relative" }}>
@@ -790,14 +768,14 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                         background: "var(--ink-800)", color: "var(--volt-500)",
                         display: "grid", placeItems: "center", fontWeight: 900, fontSize: "0.75rem", flexShrink: 0,
                       }}>
-                        {(selectedUser.displayName || selectedUser.email || "?").charAt(0).toUpperCase()}
+                        {(selectedUser!.displayName || selectedUser!.email || "?").charAt(0).toUpperCase()}
                       </div>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 800, fontSize: "0.875rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {selectedUser.displayName || "(no name)"}
+                          {selectedUser!.displayName || "(no name)"}
                         </div>
                         <div style={{ color: "var(--text-3)", fontSize: "0.75rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {selectedUser.email}
+                          {selectedUser!.email}
                         </div>
                       </div>
                     </div>

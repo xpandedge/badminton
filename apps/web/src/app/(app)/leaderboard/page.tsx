@@ -84,10 +84,7 @@ export default async function LeaderboardPage() {
       ) : (
         <div style={{ display: "grid", gap: "0.5rem" }}>
           {/* Header row */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "2rem minmax(0,1fr) repeat(5, 3.5rem)",
-            gap: "0.5rem",
+          <div className="pb-alltime-leaderboard-grid" style={{
             padding: "0.5rem 0.75rem",
             fontFamily: "var(--font-mono)",
             fontSize: "0.625rem",
@@ -111,10 +108,8 @@ export default async function LeaderboardPage() {
             return (
               <div
                 key={row.uid}
+                className="pb-alltime-leaderboard-grid"
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "2rem minmax(0,1fr) repeat(5, 3.5rem)",
-                  gap: "0.5rem",
                   alignItems: "center",
                   padding: "0.875rem 0.75rem",
                   borderRadius: "var(--r-xl)",

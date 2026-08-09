@@ -9,8 +9,9 @@ import {
   registerWithEmail,
 } from "@/lib/auth/sign-in";
 import { setSessionCookie } from "@/lib/auth/session-cookie";
-import { getFirebaseServices } from "@/lib/firebase/client";
 import { logEvent } from "@/lib/analytics/events";
+import { Logo } from "@/components/Logo";
+import type { UserCredential } from "firebase/auth";
 
 function GoogleIcon() {
   return (
@@ -43,20 +44,16 @@ function SignInForm() {
   const [busy, setBusy] = useState(false);
   const [registered, setRegistered] = useState(false);
 
-  async function run(fn: () => Promise<unknown>, isRegister = false) {
+  async function run(fn: () => Promise<UserCredential>, isRegister = false) {
     setBusy(true);
     setError(null);
     try {
-      await fn();
+      const credential = await fn();
 
-      // Set the session cookie immediately from the current Firebase user —
-      // avoids a race where router.push fires before onIdTokenChanged sets the cookie.
-      const { auth } = getFirebaseServices();
-      const currentUser = auth.currentUser;
-      if (currentUser) {
-        const token = await currentUser.getIdToken();
-        setSessionCookie(token);
-      }
+      // The returned credential is authoritative even if auth.currentUser lags
+      // briefly after popup sign-in.
+      const token = await credential.user.getIdToken();
+      setSessionCookie(token);
 
       if (isRegister) {
         void logEvent("user_signed_up");
@@ -65,7 +62,8 @@ function SignInForm() {
         await new Promise((r) => setTimeout(r, 1200));
       }
 
-      router.push(redirectTo);
+      router.replace(redirectTo);
+      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
     } finally {
@@ -128,36 +126,7 @@ function SignInForm() {
               textDecoration: "none",
             }}
           >
-            <div
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: "var(--r-md)",
-                background: "var(--volt-500)",
-                display: "grid",
-                placeItems: "center",
-                flexShrink: 0,
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-                <rect x="5" y="3" width="19" height="25" rx="9" transform="rotate(-15 14 15)" fill="none" stroke="#16241C" strokeWidth="3" />
-                <circle cx="28" cy="28" r="8" fill="#16241C" />
-                <circle cx="26" cy="26" r="3" fill="#C6F135" />
-              </svg>
-            </div>
-            <span
-              style={{
-                fontFamily: "var(--font-display)",
-                fontWeight: 900,
-                fontSize: "1rem",
-                color: "var(--n-50)",
-                textTransform: "uppercase",
-                letterSpacing: "-0.01em",
-                lineHeight: 1,
-              }}
-            >
-              Pickle<span style={{ color: "var(--volt-500)" }}>Baddies</span>
-            </span>
+            <Logo variant="full" theme="dark" size={52} animated showKicker />
           </Link>
 
           {/* Headline */}

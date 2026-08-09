@@ -140,7 +140,7 @@ export default function DashboardPage() {
         </Link>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.625rem", animation: "pb-rise 400ms 60ms var(--ease-out) both" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "0.625rem", animation: "pb-rise 400ms 60ms var(--ease-out) both" }}>
         <Link
           href="/sessions/new"
           style={{
@@ -168,6 +168,20 @@ export default function DashboardPage() {
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           Start a session
+        </Link>
+        <Link
+          href="/bookings"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: "0.375rem",
+            background: "var(--surface-sunken)", border: "1px solid var(--border)", color: "var(--text-1)",
+            borderRadius: "var(--r-xl)", padding: "1rem 1rem", fontFamily: "var(--font-display)",
+            fontWeight: 900, fontSize: "0.875rem", textTransform: "uppercase", textDecoration: "none", whiteSpace: "nowrap",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="17" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
+          </svg>
+          Book a court
         </Link>
         <Link
           href="/leaderboard"

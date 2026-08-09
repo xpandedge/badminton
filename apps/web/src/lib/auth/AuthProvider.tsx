@@ -20,19 +20,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = onIdTokenChanged(auth, async (user) => {
       if (user) {
         try {
-          await ensureUserProfile(db, user);
           const token = await user.getIdToken();
           setSessionCookie(token);
-          // Fire-and-forget: create global player doc if it doesn't exist yet.
-          // Must run after setSessionCookie so the server action can read the token.
-          void ensureGlobalPlayer(user.displayName ?? "");
         } catch (err) {
           console.error("session setup failed", err);
         }
+        setState({ user, loading: false });
+
+        // Fire-and-forget: keep profile/player records warm after the auth state
+        // is usable. These writes should not block the session cookie handoff.
+        void (async () => {
+          try {
+            await ensureUserProfile(db, user);
+            await ensureGlobalPlayer(user.displayName ?? "");
+          } catch (err) {
+            console.error("profile setup failed", err);
+          }
+        })();
       } else {
         clearSessionCookie();
+        setState({ user, loading: false });
       }
-      setState({ user, loading: false });
     });
     return unsub;
   }, []);

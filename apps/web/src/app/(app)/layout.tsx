@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { signOutUser } from "@/lib/auth/sign-in";
 import { SportPreferenceProvider, useSportPreference } from "@/lib/sport/SportPreferenceContext";
 import { SportPickerModal } from "@/components/SportPickerModal";
+import { Logo } from "@/components/Logo";
 
 function SportBadge() {
   const { sport, isLoaded, openPicker } = useSportPreference();
@@ -152,6 +153,32 @@ function NavBar() {
           color: isGroups ? "var(--volt-500)" : "var(--text-3)",
         }}>Groups</span>
       </Link>
+      {/* Help */}
+      <Link
+        href="/help"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 3,
+          textDecoration: "none",
+          flex: 1,
+          paddingBlock: "0.5rem",
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: "9px",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          color: "var(--text-3)",
+        }}>Help</span>
+      </Link>
     </nav>
   );
 }
@@ -173,21 +200,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         placeItems: "center",
       }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "1rem" }}>
-          <div style={{
-            width: 44,
-            height: 44,
-            borderRadius: "var(--r-md)",
-            background: "var(--volt-500)",
-            display: "grid",
-            placeItems: "center",
-            animation: "pb-pop 600ms var(--ease-out) infinite alternate",
-          }}>
-            <svg width="26" height="26" viewBox="0 0 40 40" fill="none">
-              <rect x="5" y="3" width="19" height="25" rx="9" transform="rotate(-15 14 15)" fill="none" stroke="#16241C" strokeWidth="3" />
-              <circle cx="28" cy="28" r="8" fill="#16241C" />
-              <circle cx="26" cy="26" r="3" fill="#C6F135" />
-            </svg>
-          </div>
+          <Logo variant="mark" theme="dark" size={52} animated />
           <span style={{
             fontFamily: "var(--font-mono)",
             fontSize: "0.6875rem",
@@ -229,36 +242,34 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         padding: "0 1.25rem",
         height: 56,
       }}>
-        <Link href="/dashboard" style={{ display: "flex", alignItems: "center", gap: "0.5rem", textDecoration: "none" }}>
-          <div style={{
-            width: 30,
-            height: 30,
-            borderRadius: "var(--r-md)",
-            background: "var(--volt-500)",
-            display: "grid",
-            placeItems: "center",
-            flexShrink: 0,
-          }}>
-            <svg width="18" height="18" viewBox="0 0 40 40" fill="none">
-              <rect x="5" y="3" width="19" height="25" rx="9" transform="rotate(-15 14 15)" fill="none" stroke="#16241C" strokeWidth="3" />
-              <circle cx="28" cy="28" r="8" fill="#16241C" />
-              <circle cx="26" cy="26" r="3" fill="#C6F135" />
-            </svg>
-          </div>
-          <span style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 900,
-            fontSize: "0.875rem",
-            color: "var(--text-1)",
-            textTransform: "uppercase",
-            letterSpacing: "-0.01em",
-          }}>
-            Pickle<span style={{ color: "var(--volt-500)" }}>Baddies</span>
-          </span>
+        <Link href="/dashboard" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
+          <Logo variant="full" theme="light" size={38} />
         </Link>
 
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
           <SportBadge />
+          <Link
+            href="/help"
+            title="User guide"
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: "50%",
+              border: "1.5px solid var(--border)",
+              background: "var(--surface-sunken)",
+              display: "grid",
+              placeItems: "center",
+              color: "var(--text-3)",
+              textDecoration: "none",
+              flexShrink: 0,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </Link>
           <button
             onClick={() => signOutUser()}
             style={{

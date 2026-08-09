@@ -710,12 +710,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </section>
       )}
 
-      <main style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1.25fr) minmax(min(100%, 320px), 0.75fr)",
-        gap: "1rem",
-        alignItems: "start",
-      }}>
+      <main className="pb-live-main-grid">
         {/* Court-centric live board — each court shows its current match, filled
             automatically the instant it frees up. A bench strip answers "who's
             sitting out right now" and finished games sit below as history. */}
@@ -795,15 +790,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </section>
 
         {/* Leaderboard */}
-        <aside style={{
+        <aside className="pb-live-leaderboard-card" style={{
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: "var(--r-xl)",
           padding: "1rem",
           boxShadow: "var(--shadow-sm)",
           animation: "pb-rise 400ms 150ms var(--ease-out) both",
-          position: "sticky",
-          top: 72,
         }}>
           <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.875rem" }}>
             Leaderboard
@@ -815,10 +808,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           ) : (
             <div style={{ display: "grid", gap: "0.375rem" }}>
               {/* Leaderboard Header */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: `1.5rem minmax(0, 1fr) repeat(${session.scoringMode === "points" ? 5 : 4}, minmax(1.75rem, auto))`,
-                gap: "0.375rem",
+              <div className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
                 padding: "0.25rem 0.5rem",
                 fontFamily: "var(--font-mono)",
                 fontSize: "0.625rem",
@@ -844,11 +834,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 const pd = row.pointDifference ?? 0;
 
                 return (
-                  <div key={row.playerId} style={{
-                    display: "grid",
-                    gridTemplateColumns: `1.5rem minmax(0, 1fr) repeat(${session.scoringMode === "points" ? 5 : 4}, minmax(1.75rem, auto))`,
+                  <div key={row.playerId} className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
                     alignItems: "center",
-                    gap: "0.375rem",
                     padding: "0.5rem 0.5rem",
                     borderRadius: "var(--r-lg)",
                     background: idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
@@ -1003,7 +990,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <h3 style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)", marginBottom: "0.625rem" }}>
               ⚡ Add Walk-in Guest Player (No Email Needed)
             </h3>
-            <form onSubmit={handleAddSessionGuest} style={{ display: "grid", gridTemplateColumns: "1fr minmax(130px, 160px) auto", gap: "0.5rem", alignItems: "center" }}>
+            <form onSubmit={handleAddSessionGuest} className="pb-guest-add-form">
               <input
                 data-testid="session-guest-name-input"
                 className="pb-input"

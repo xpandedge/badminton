@@ -349,15 +349,19 @@ export async function getMySessionsAction(): Promise<ActionResult<{
     db.collectionGroup("players").where("playerId", "==", user.uid).get(),
   ]);
 
-  const groupRoles = await Promise.all(
-    groupSnap.docs.map(async (groupDoc) => {
-      const membership = await db.doc(`groups/${groupDoc.id}/members/${user.uid}`).get();
-      const role = membership.exists
+  // One getAll instead of a round trip per group. Same reads, one wave.
+  const membershipSnaps = groupSnap.docs.length > 0
+    ? await db.getAll(...groupSnap.docs.map((g) => db.doc(`groups/${g.id}/members/${user.uid}`)))
+    : [];
+  const groupRoles = groupSnap.docs.map((groupDoc, i) => {
+    const membership = membershipSnaps[i];
+    return {
+      groupId: groupDoc.id,
+      role: membership?.exists
         ? (membership.data() as { role?: GroupRole }).role ?? null
-        : null;
-      return { groupId: groupDoc.id, role };
-    }),
-  );
+        : null,
+    };
+  });
   const groupPlayerSnaps = groupRoles.length > 0
     ? await db.getAll(...groupRoles.map(({ groupId }) => db.doc(`groups/${groupId}/players/${user.uid}`)))
     : [];
@@ -370,9 +374,16 @@ export async function getMySessionsAction(): Promise<ActionResult<{
   const managedGroupIds = new Set(groupRoles
     .filter(({ role }) => canManageGroup(role))
     .map(({ groupId }) => groupId));
+  // One query per 30 groups via `in`, rather than one query per group. Returns
+  // exactly the same sessions — deliberately no date or status filter here, so
+  // nothing can silently disappear from the dashboard.
+  const groupIdChunks: string[][] = [];
+  for (let i = 0; i < groupRoles.length; i += 30) {
+    groupIdChunks.push(groupRoles.slice(i, i + 30).map(({ groupId }) => groupId));
+  }
   const allSessionSnaps = await Promise.all(
-    groupRoles.map(({ groupId }) =>
-      db.collection("sessions").where("groupId", "==", groupId).get()
+    groupIdChunks.map((ids) =>
+      db.collection("sessions").where("groupId", "in", ids).get()
     ),
   );
   const playerSessionSnaps = playerSnap.docs.length > 0

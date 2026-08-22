@@ -39,8 +39,35 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
 
   useEffect(() => {
     void load();
-    const t = setInterval(() => void load(), POLL_MS);
-    return () => clearInterval(t);
+
+    // The board is left open on a phone all evening. Polling a hidden tab burns
+    // a full session read every 15s for nobody, so pause while it is not
+    // visible and refetch immediately when it comes back.
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer === null) timer = setInterval(() => void load(), POLL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void load();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, [load]);
 
   const storeKey = data ? `pb-board-me:${data.sessionId}` : null;

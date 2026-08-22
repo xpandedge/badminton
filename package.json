@@ -16,6 +16,7 @@
     "typecheck": "pnpm -r typecheck",
     "emulators": "firebase emulators:start",
     "seed": "tsx scripts/seed.ts",
+    "backfill:squad-ratings": "tsx scripts/backfill-squad-ratings.ts",
     "dev:seed": "FIREBASE_ADMIN_PROJECT_ID=picklebaddies-85732 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 tsx scripts/dev-seed.ts",
     "test:e2e:full": "firebase emulators:exec --only auth,firestore,functions --project picklebaddies-85732 \"pnpm dev:seed && pnpm --filter @picklebaddies/web test:e2e\""
   },

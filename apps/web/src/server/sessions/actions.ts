@@ -20,6 +20,7 @@ import {
 import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { toPlain } from "@/server/lib/serialize";
 
 export interface CourtInput {
   name: string;
@@ -1213,21 +1214,20 @@ export async function syncConfirmedRsvpsToSessionPlayers(
 // ── getGroupSessionsAction ───────────────────────────────────────────────────
 
 export async function getGroupSessionsAction(groupId: string): Promise<ActionResult<any[]>> {
-  const db = getAdminDb();
   try {
+    // getAdminDb() belongs inside the try. Outside it, a failure here escapes as
+    // an unhandled Server Components error, which production renders as an
+    // opaque "an error occurred" with no message — the page then shows an empty
+    // session list with no indication anything went wrong.
+    const db = getAdminDb();
     const snap = await db.collection("sessions").where("groupId", "==", groupId).get();
-    const list = snap.docs.map((d) => {
-      const data = d.data();
-      let startsAtDate = data.startsAt;
-      if (startsAtDate && typeof startsAtDate.toDate === "function") {
-        startsAtDate = startsAtDate.toDate();
-      }
-      return {
-        id: d.id,
-        ...data,
-        startsAt: startsAtDate,
-      };
-    });
+    // toPlain converts every Firestore Timestamp, not just startsAt. Converting
+    // one field and spreading the rest raw left updatedAt/createdAt as class
+    // instances, which React cannot pass to a Client Component — the action
+    // threw and the squad page showed an empty session list.
+    const list = snap.docs.map((d) =>
+      toPlain<Record<string, any>>({ id: d.id, ...d.data() }),
+    );
 
     list.sort((a, b) => {
       const getMs = (val: any) => {

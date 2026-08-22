@@ -16,8 +16,6 @@ initializeApp();
 setGlobalOptions({ region: "europe-west2", maxInstances: 10 });
 
 // Planned callable functions (implemented in later milestones):
-//   generateSchedule(sessionId)                         — PRD §16.1
-//   rebalanceSession(sessionId, reason)                 — PRD §16.2 / §14.9
 //   submitScore(sessionId, roundId, matchId, payload)   — DELTA_SPEC D1
 //   updatePlayerStatus(sessionId, sessionPlayerId, st)  — PRD §16.4
 //   advanceRound(sessionId)                             — PRD §16.5
@@ -30,12 +28,10 @@ export {
   rejectJoinRequest
 } from "./join.js";
 
-export { generateSchedule } from "./generateSchedule.js";
 export { submitScore } from "./submitScore.js";
 export { startSession, pauseSession, resumeSession, completeSession } from "./sessionLifecycle.js";
 export { advanceRound } from "./advanceRound.js";
 export { updatePlayerStatus, addLatePlayer } from "./updatePlayerStatus.js";
-export { rebalanceSession } from "./rebalanceSession.js";
 export { swapPlayers, moveMatch, disableCourt } from "./manualOverride.js";
 export { addGroupMemberByEmail } from "./groups.js";
 export { getScoreLinkData, submitScoreByLink } from "./scoreLink.js";

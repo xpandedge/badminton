@@ -9,6 +9,7 @@ import {
   type BoardData,
   type BoardMatch,
 } from "@/lib/sessions/board";
+import { formatSessionStatus } from "@/lib/format/status";
 
 function titleCase(v: string) {
   return v.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
@@ -115,7 +116,7 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
               </h1>
             </div>
             <span style={{ display: "inline-flex", flexShrink: 0, padding: "4px 10px", borderRadius: "var(--r-pill)", background: isLive ? "var(--volt-500)" : "rgba(246,248,244,0.12)", color: isLive ? "var(--ink-800)" : "var(--n-50)", fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-              {isLive ? "● Live" : titleCase(data.sessionStatus)}
+              {isLive ? "● Playing now" : formatSessionStatus(data.sessionStatus)}
             </span>
           </div>
 
@@ -232,10 +233,6 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
             })}
           </div>
         )}
-
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.04em", textAlign: "center", marginTop: "0.2rem" }}>
-          Refreshes every 15s · no account needed{me ? " · your pick is saved on this phone only" : ""}
-        </div>
       </main>
     </div>
   );

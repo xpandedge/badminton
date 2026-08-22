@@ -1,14 +1,26 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useCallback, useEffect, useState, use } from "react";
 import { watchSession, watchSessionPlayers, updateSessionDraft } from "@/lib/sessions/sessions";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { canManageSessionPlayers } from "@picklebaddies/domain";
+import { shareUrl } from "@/lib/config/site";
 import { addGroupMemberToSession } from "@/server/sessions/players";
-import { addCourtToSession } from "@/server/sessions/actions";
+import { addGuestPlayerToSession, rebalanceSession } from "@/lib/sessions/rebalance";
+import {
+  addCourtToSession,
+  demoteCasualRsvp,
+  ensureSessionRsvpLink,
+  getSessionRsvpAdminRoster,
+  promoteCasualRsvp,
+  removeCasualRsvp,
+  syncConfirmedRsvpsToSessionPlayers,
+  updateSessionRsvpCapacity,
+  type SessionRsvpAdminRoster,
+} from "@/server/sessions/actions";
 import { formatSessionStatus, formatPlayerStatus, formatScoringMode } from "@/lib/format/status";
 import { QRCode } from "@/components/QRCode";
 
@@ -21,6 +33,24 @@ function statValue(value: string | number) {
 }
 
 type GroupPlayer = { id: string; displayName?: string; skillLevel?: string; userId?: string };
+type RsvpCapacityFormState = {
+  totalPlayers: number;
+  casualConfirmedSlots: number;
+  waitlistEnabled: boolean;
+  cutoffAt: string;
+};
+
+function toInputDateTime(value: unknown): string {
+  if (!value) return "";
+  const date = typeof (value as { toDate?: () => Date }).toDate === "function"
+    ? (value as { toDate: () => Date }).toDate()
+    : value instanceof Date
+      ? value
+      : new Date(value as string);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
 
 export default function SessionDetailPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
@@ -29,7 +59,28 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [players, setPlayers] = useState<SessionPlayer[]>([]);
   const [groupPlayers, setGroupPlayers] = useState<GroupPlayer[]>([]);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [isAddingAll, setIsAddingAll] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [guestName, setGuestName] = useState("");
+  const [guestSkill, setGuestSkill] = useState("unknown");
+  const [isAddingGuest, setIsAddingGuest] = useState(false);
+  const [guestError, setGuestError] = useState<string | null>(null);
+  const [rsvpCapacityForm, setRsvpCapacityForm] = useState<RsvpCapacityFormState>({
+    totalPlayers: 11,
+    casualConfirmedSlots: 3,
+    waitlistEnabled: true,
+    cutoffAt: "",
+  });
+  const [isSavingRsvpCapacity, setIsSavingRsvpCapacity] = useState(false);
+  const [rsvpCapacityError, setRsvpCapacityError] = useState<string | null>(null);
+  const [rsvpSyncMessage, setRsvpSyncMessage] = useState<string | null>(null);
+  const [isSyncingRsvp, setIsSyncingRsvp] = useState(false);
+  const [rsvpRoster, setRsvpRoster] = useState<SessionRsvpAdminRoster | null>(null);
+  const [rsvpRosterError, setRsvpRosterError] = useState<string | null>(null);
+  const [rsvpOverrideBusyId, setRsvpOverrideBusyId] = useState<string | null>(null);
+  const [rsvpCopied, setRsvpCopied] = useState(false);
+  const [isCreatingRsvpLink, setIsCreatingRsvpLink] = useState(false);
+  const [rsvpCreateError, setRsvpCreateError] = useState<string | null>(null);
 
   // Add court state
   const [addCourtName, setAddCourtName] = useState("");
@@ -61,12 +112,41 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
     return watchGroupPlayers(session.groupId, (gps) => setGroupPlayers(gps as GroupPlayer[]), () => setGroupPlayers([]));
   }, [session?.groupId]);
 
+  useEffect(() => {
+    if (!session) return;
+    setRsvpCapacityForm({
+      totalPlayers: Number(session.rsvpCapacity?.totalPlayers ?? 11),
+      casualConfirmedSlots: Number(session.rsvpCapacity?.casualConfirmedSlots ?? 3),
+      waitlistEnabled: session.rsvpCapacity?.waitlistEnabled ?? true,
+      cutoffAt: toInputDateTime(session.rsvpCapacity?.cutoffAt),
+    });
+  }, [sessionId, session?.rsvpCapacity]);
+
+  const refreshRsvpRoster = useCallback(async () => {
+    if (!canManage || !session?.rsvpCode) return;
+    const result = await getSessionRsvpAdminRoster(sessionId).catch((error) => ({
+      ok: false as const,
+      message: error.message,
+    }));
+    if (result?.ok) {
+      setRsvpRoster(result.data);
+      setRsvpRosterError(null);
+    } else {
+      setRsvpRosterError(result?.message ?? "Could not load the RSVP roster.");
+    }
+  }, [canManage, session?.rsvpCode, sessionId]);
+
+  useEffect(() => {
+    void refreshRsvpRoster();
+  }, [refreshRsvpRoster]);
+
   const handleAddToSession = async (playerId: string) => {
     setAddingId(playerId);
     setAddError(null);
     try {
       const result = await addGroupMemberToSession(sessionId, playerId);
       if (!result.ok) setAddError(result.message);
+      else await refreshRsvpRoster();
     } catch {
       setAddError("Failed to add player. Try again.");
     } finally {
@@ -74,12 +154,102 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
     }
   };
 
+  const handleAddAllToSession = async () => {
+    if (rosterNotInSession.length === 0 || isAddingAll) return;
+    setIsAddingAll(true);
+    setAddError(null);
+    const results = await Promise.allSettled(rosterNotInSession.map((player) => addGroupMemberToSession(sessionId, player.id)));
+    const failed = results.filter((result) => result.status === "rejected" || (result.status === "fulfilled" && !result.value.ok));
+    if (failed.length > 0) {
+      setAddError(`${failed.length} player${failed.length === 1 ? "" : "s"} could not be added. Try the individual Add buttons.`);
+    }
+    if (failed.length < results.length) await refreshRsvpRoster();
+    setIsAddingAll(false);
+  };
+
+  const handleAddGuest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guestName.trim() || isAddingGuest || !canManage) return;
+    setIsAddingGuest(true);
+    setGuestError(null);
+    try {
+      const result = await addGuestPlayerToSession({ sessionId, displayName: guestName, skillLevel: guestSkill });
+      if (result.data.rebalanceRecommended) {
+        await rebalanceSession({ sessionId, trigger: "player_added" });
+      }
+      setGuestName("");
+      setGuestSkill("unknown");
+    } catch (error: any) {
+      setGuestError(error?.message ?? "Could not add guest. Try again.");
+    } finally {
+      setIsAddingGuest(false);
+    }
+  };
+
+  const handleSaveRsvpCapacity = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isSavingRsvpCapacity) return;
+    setIsSavingRsvpCapacity(true);
+    setRsvpCapacityError(null);
+    const result = await updateSessionRsvpCapacity(sessionId, {
+      totalPlayers: rsvpCapacityForm.totalPlayers,
+      casualConfirmedSlots: rsvpCapacityForm.casualConfirmedSlots,
+      waitlistEnabled: rsvpCapacityForm.waitlistEnabled,
+      cutoffAt: rsvpCapacityForm.cutoffAt ? new Date(rsvpCapacityForm.cutoffAt) : null,
+    }).catch((error) => ({ ok: false as const, message: error.message }));
+    setIsSavingRsvpCapacity(false);
+    if (!result?.ok) {
+      setRsvpCapacityError(result?.message ?? "Could not save this session's RSVP capacity.");
+    } else {
+      await refreshRsvpRoster();
+    }
+  };
+
+  const handleSyncRsvpRoster = async () => {
+    if (isSyncingRsvp) return;
+    setIsSyncingRsvp(true);
+    setRsvpSyncMessage(null);
+    setRsvpCapacityError(null);
+    const result = await syncConfirmedRsvpsToSessionPlayers(sessionId).catch((error) => ({
+      ok: false as const,
+      message: error.message,
+    }));
+    setIsSyncingRsvp(false);
+    if (result?.ok) {
+      setRsvpSyncMessage(`${result.data.added} added. ${result.data.waiting} waiting.`);
+      await refreshRsvpRoster();
+    } else {
+      setRsvpCapacityError(result?.message ?? "Could not sync the confirmed RSVP roster.");
+    }
+  };
+
+  const handleRsvpOverride = async (
+    rsvpId: string,
+    action: "promote" | "waiting" | "remove",
+  ) => {
+    if (rsvpOverrideBusyId) return;
+    setRsvpOverrideBusyId(rsvpId);
+    setRsvpRosterError(null);
+    const result = await (
+      action === "promote"
+        ? promoteCasualRsvp(sessionId, rsvpId)
+        : action === "waiting"
+          ? demoteCasualRsvp(sessionId, rsvpId)
+          : removeCasualRsvp(sessionId, rsvpId)
+    ).catch((error) => ({ ok: false as const, message: error.message }));
+    setRsvpOverrideBusyId(null);
+    if (!result?.ok) {
+      setRsvpRosterError(result?.message ?? "Could not update this RSVP.");
+      return;
+    }
+    await refreshRsvpRoster();
+  };
+
   const scoreLinkPath = session?.scoreCode ? `/score/${session.scoreCode}` : null;
 
   const handleCopyScoreLink = async () => {
     if (!scoreLinkPath) return;
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    await navigator.clipboard?.writeText(`${origin}${scoreLinkPath}`);
+    await navigator.clipboard?.writeText(shareUrl(scoreLinkPath));
   };
 
   const handleToggleScoreLink = async () => {
@@ -89,13 +259,14 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
 
   const boardEnabled = session?.boardEnabled !== false;
   const boardPath = session?.scoreCode ? `/board/${session.scoreCode}` : null;
-  const boardUrl = boardPath && typeof window !== "undefined" ? `${window.location.origin}${boardPath}` : boardPath ?? "";
+  const boardUrl = boardPath ? shareUrl(boardPath) : "";
+  const rsvpPath = session?.rsvpCode ? `/rsvp/${session.rsvpCode}` : null;
+  const rsvpUrl = rsvpPath ? shareUrl(rsvpPath) : "";
   const [boardCopied, setBoardCopied] = useState(false);
 
   const handleCopyBoardLink = async () => {
     if (!boardPath) return;
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    await navigator.clipboard?.writeText(`${origin}${boardPath}`);
+    await navigator.clipboard?.writeText(shareUrl(boardPath));
     setBoardCopied(true);
     setTimeout(() => setBoardCopied(false), 1600);
   };
@@ -115,6 +286,29 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
       }
     }
     await handleCopyBoardLink();
+  };
+
+  const handleCopyRsvpLink = async () => {
+    if (!rsvpPath) return;
+    await navigator.clipboard?.writeText(shareUrl(rsvpPath));
+    setRsvpCopied(true);
+    setTimeout(() => setRsvpCopied(false), 1600);
+  };
+
+  const handleCreateRsvpLink = async () => {
+    if (isCreatingRsvpLink) return;
+    setIsCreatingRsvpLink(true);
+    setRsvpCreateError(null);
+    const result = await ensureSessionRsvpLink(sessionId).catch((error) => ({
+      ok: false as const,
+      message: error.message,
+    }));
+    setIsCreatingRsvpLink(false);
+    if (!result?.ok) {
+      setRsvpCreateError(result?.message ?? "Could not create an RSVP link for this session.");
+      return;
+    }
+    setSession((current) => current ? { ...current, rsvpCode: result.data.rsvpCode, rsvpEnabled: true } : current);
   };
 
   const handleToggleBoard = async () => {
@@ -167,6 +361,18 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
 
   const canJoin = isGroupMember && !currentUserInSession &&
     session.status !== "completed" && session.status !== "cancelled";
+  const runSessionLabel =
+    session.status === "active" || session.status === "paused"
+      ? "Run Session"
+      : session.status === "completed"
+        ? "View Results"
+        : "Start Playing";
+  const runSessionHint =
+    session.status === "active" || session.status === "paused"
+      ? "Score games and manage courts."
+      : session.status === "completed"
+        ? "Review matches and scores."
+        : "Set up the first games.";
 
   return (
     <div style={{
@@ -251,28 +457,33 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   {addingId === currentUser.uid ? "Joining…" : "Join Session"}
                 </button>
               )}
-              <a
-                href={`/sessions/${sessionId}/live`}
-                style={{
-                  height: 48,
-                  padding: "0 1rem",
-                  borderRadius: "var(--r-lg)",
-                  background: "var(--volt-500)",
-                  color: "var(--ink-800)",
-                  fontWeight: 900,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  boxShadow: "var(--shadow-volt)",
-                  textDecoration: "none",
-                }}
-              >
-                Live Console
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M5 12h14" />
-                  <path d="m12 5 7 7-7 7" />
-                </svg>
-              </a>
+              <div style={{ display: "grid", gap: "0.35rem", justifyItems: "end" }}>
+                <a
+                  href={`/sessions/${sessionId}/live`}
+                  style={{
+                    height: 48,
+                    padding: "0 1rem",
+                    borderRadius: "var(--r-lg)",
+                    background: "var(--volt-500)",
+                    color: "var(--ink-800)",
+                    fontWeight: 900,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    boxShadow: "var(--shadow-volt)",
+                    textDecoration: "none",
+                  }}
+                >
+                  {runSessionLabel}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                </a>
+                <span style={{ color: "rgba(246,248,244,0.62)", fontSize: "0.75rem", fontWeight: 700 }}>
+                  {runSessionHint}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -354,9 +565,9 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                  Player Board
+                  Player View
                 </h2>
-                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Players see their matches — no sign-in.</p>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Share court assignments with players.</p>
               </div>
               <button
                 type="button"
@@ -389,7 +600,281 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                 </div>
               </div>
             ) : (
-              <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>The board is off. Turn it on to share a live see-your-matches link.</p>
+              <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>Turn this on when players should see their courts.</p>
+            )}
+          </div>
+        )}
+
+        {canManage && (
+          <div style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-xl)",
+            padding: "1rem",
+            boxShadow: "var(--shadow-sm)",
+            animation: "pb-rise 400ms 85ms var(--ease-out) both",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.875rem" }}>
+              <div style={{ width: 40, height: 40, borderRadius: "var(--r-lg)", background: "var(--volt-500)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ink-800)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 6h13" />
+                  <path d="M8 12h13" />
+                  <path d="M8 18h13" />
+                  <path d="M3 6h.01" />
+                  <path d="M3 12h.01" />
+                  <path d="M3 18h.01" />
+                </svg>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
+                  {rsvpPath ? `RSVP list for ${session.name}` : "Create RSVP link"}
+                </h2>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>
+                  {rsvpPath ? "These numbers apply only to this session." : "Share this with regulars and casuals for this session."}
+                </p>
+              </div>
+            </div>
+
+            {rsvpPath ? (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.625rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem", marginBottom: "0.75rem" }}>
+                  <a href={rsvpPath} style={{ color: "var(--emerald-600)", fontWeight: 800, fontSize: "0.875rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {rsvpUrl}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleCopyRsvpLink}
+                    style={{ height: 38, padding: "0 0.75rem", border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, cursor: "pointer" }}
+                  >
+                    {rsvpCopied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSyncRsvpRoster}
+                  disabled={isSyncingRsvp || (session.status !== "draft" && session.status !== "scheduled")}
+                  style={{
+                    width: "100%",
+                    minHeight: 42,
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--r-md)",
+                    background: "var(--surface-sunken)",
+                    color: "var(--ink-800)",
+                    fontWeight: 900,
+                    cursor: isSyncingRsvp || (session.status !== "draft" && session.status !== "scheduled") ? "default" : "pointer",
+                    opacity: isSyncingRsvp || (session.status !== "draft" && session.status !== "scheduled") ? 0.55 : 1,
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  {isSyncingRsvp ? "Syncing..." : "Sync confirmed roster"}
+                </button>
+                {rsvpSyncMessage && (
+                  <p role="status" style={{ color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800, margin: "-0.3rem 0 0.65rem" }}>
+                    {rsvpSyncMessage}
+                  </p>
+                )}
+
+                {rsvpRoster && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: "0.625rem", marginBottom: "0.75rem" }}>
+                    {[
+                      { title: "Confirmed casuals", rows: rsvpRoster.casualsConfirmed, empty: "No casuals confirmed." },
+                      { title: "Waiting casuals", rows: rsvpRoster.casualsWaiting, empty: "No casuals waiting." },
+                    ].map((bucket) => (
+                      <div key={bucket.title} style={{ border: "1px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface-sunken)", padding: "0.625rem", display: "grid", gap: "0.5rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+                          <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "0.95rem", fontWeight: 900 }}>{bucket.title}</h3>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", fontWeight: 900 }}>{bucket.rows.length}</span>
+                        </div>
+                        {bucket.rows.length === 0 ? (
+                          <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>{bucket.empty}</p>
+                        ) : (
+                          <div style={{ display: "grid", gap: "0.45rem" }}>
+                            {bucket.rows.map((entry) => {
+                              const isBusy = rsvpOverrideBusyId === entry.rsvpId;
+                              const isConfirmedBucket = bucket.title === "Confirmed casuals";
+                              return (
+                                <div key={entry.rsvpId} style={{ display: "grid", gap: "0.45rem", padding: "0.55rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)" }}>
+                                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+                                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 900 }}>{entry.displayName}</span>
+                                    <span style={{
+                                      padding: "2px 6px",
+                                      borderRadius: "var(--r-pill)",
+                                      background: entry.isPublic ? "rgba(198,241,53,0.16)" : "var(--surface-sunken)",
+                                      color: entry.isPublic ? "var(--ink-800)" : "var(--text-3)",
+                                      fontFamily: "var(--font-mono)",
+                                      fontSize: "0.5625rem",
+                                      fontWeight: 900,
+                                      letterSpacing: "0.06em",
+                                      textTransform: "uppercase",
+                                      flexShrink: 0,
+                                    }}>
+                                      {entry.isPublic ? "Link" : "Member"}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+                                    <button
+                                      type="button"
+                                      disabled={isBusy || isConfirmedBucket}
+                                      onClick={() => handleRsvpOverride(entry.rsvpId, "promote")}
+                                      style={{
+                                        height: 30,
+                                        padding: "0 0.55rem",
+                                        border: "none",
+                                        borderRadius: "var(--r-md)",
+                                        background: isConfirmedBucket ? "var(--surface-sunken)" : "var(--volt-500)",
+                                        color: isConfirmedBucket ? "var(--text-3)" : "var(--ink-800)",
+                                        fontSize: "0.6875rem",
+                                        fontWeight: 900,
+                                        cursor: isBusy || isConfirmedBucket ? "default" : "pointer",
+                                      }}
+                                    >
+                                      Promote
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isBusy || !isConfirmedBucket}
+                                      onClick={() => handleRsvpOverride(entry.rsvpId, "waiting")}
+                                      style={{
+                                        height: 30,
+                                        padding: "0 0.55rem",
+                                        border: "1px solid var(--border)",
+                                        borderRadius: "var(--r-md)",
+                                        background: isConfirmedBucket ? "var(--surface-sunken)" : "var(--surface)",
+                                        color: isConfirmedBucket ? "var(--text-1)" : "var(--text-3)",
+                                        fontSize: "0.6875rem",
+                                        fontWeight: 900,
+                                        cursor: isBusy || !isConfirmedBucket ? "default" : "pointer",
+                                      }}
+                                    >
+                                      Move to waiting
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => handleRsvpOverride(entry.rsvpId, "remove")}
+                                      style={{
+                                        height: 30,
+                                        padding: "0 0.55rem",
+                                        border: "1px solid var(--border)",
+                                        borderRadius: "var(--r-md)",
+                                        background: "transparent",
+                                        color: "var(--danger)",
+                                        fontSize: "0.6875rem",
+                                        fontWeight: 900,
+                                        cursor: isBusy ? "default" : "pointer",
+                                        opacity: isBusy ? 0.55 : 1,
+                                      }}
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {rsvpRosterError && (
+                  <p role="status" style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 800, margin: "-0.2rem 0 0.65rem" }}>
+                    {rsvpRosterError}
+                  </p>
+                )}
+
+                <form onSubmit={handleSaveRsvpCapacity} style={{ display: "grid", gap: "0.625rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: "0.5rem" }}>
+                    <label style={{ display: "grid", gap: "0.35rem", color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                      Total player capacity
+                      <input
+                        className="pb-input"
+                        type="number"
+                        min={4}
+                        value={rsvpCapacityForm.totalPlayers}
+                        onChange={(event) => setRsvpCapacityForm((current) => ({ ...current, totalPlayers: Number(event.target.value) }))}
+                        style={{ height: 40, borderRadius: "var(--r-md)", marginTop: 0 }}
+                      />
+                    </label>
+                  </div>
+                  <label style={{ display: "grid", gap: "0.35rem", color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                    RSVP cutoff
+                    <input
+                      className="pb-input"
+                      type="datetime-local"
+                      value={rsvpCapacityForm.cutoffAt}
+                      onChange={(event) => setRsvpCapacityForm((current) => ({ ...current, cutoffAt: event.target.value }))}
+                      style={{ height: 40, borderRadius: "var(--r-md)", marginTop: 0 }}
+                    />
+                  </label>
+                  <label style={{
+                    minHeight: 40,
+                    display: "flex", alignItems: "center", gap: "0.5rem",
+                    padding: "0 0.75rem", border: "1px solid var(--border)",
+                    borderRadius: "var(--r-md)", background: "var(--surface-sunken)",
+                    color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800,
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={rsvpCapacityForm.waitlistEnabled}
+                      onChange={(event) => setRsvpCapacityForm((current) => ({ ...current, waitlistEnabled: event.target.checked }))}
+                    />
+                    Casual waiting list
+                  </label>
+                  {rsvpCapacityError && (
+                    <p role="status" style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                      {rsvpCapacityError}
+                    </p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isSavingRsvpCapacity}
+                    style={{
+                      height: 42,
+                      border: "none",
+                      borderRadius: "var(--r-md)",
+                      background: "var(--ink-800)",
+                      color: "var(--volt-500)",
+                      fontWeight: 900,
+                      cursor: isSavingRsvpCapacity ? "default" : "pointer",
+                      opacity: isSavingRsvpCapacity ? 0.6 : 1,
+                    }}
+                  >
+                    {isSavingRsvpCapacity ? "Saving..." : "Save session RSVP"}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div style={{ display: "grid", gap: "0.75rem" }}>
+                <p style={{ color: "var(--text-2)", fontSize: "0.875rem" }}>
+                  Create a share link so regulars can view the roster and casuals can add their names.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCreateRsvpLink}
+                  disabled={isCreatingRsvpLink}
+                  style={{
+                    width: "100%",
+                    minHeight: 44,
+                    border: "none",
+                    borderRadius: "var(--r-md)",
+                    background: "var(--volt-500)",
+                    color: "var(--ink-800)",
+                    fontWeight: 900,
+                    cursor: isCreatingRsvpLink ? "default" : "pointer",
+                    opacity: isCreatingRsvpLink ? 0.6 : 1,
+                  }}
+                >
+                  {isCreatingRsvpLink ? "Creating..." : "Create share link"}
+                </button>
+                {rsvpCreateError && (
+                  <p role="status" style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                    {rsvpCreateError}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -412,9 +897,9 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                  Score Link
+                  Score Entry Link
                 </h2>
-                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Courts enter results without signing in.</p>
+                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Let each court submit results quickly.</p>
               </div>
               <button
                 type="button"
@@ -448,7 +933,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
             {scoreLinkPath && (
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.625rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem" }}>
                 <a href={scoreLinkPath} style={{ color: "var(--emerald-600)", fontWeight: 800, fontSize: "0.875rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {typeof window !== "undefined" ? `${window.location.origin}${scoreLinkPath}` : scoreLinkPath}
+                  {shareUrl(scoreLinkPath)}
                 </a>
                 <button
                   type="button"
@@ -610,7 +1095,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                       fontWeight: 800,
                       whiteSpace: "nowrap",
                     }}>
-                      {titleCase(player.status)}
+                      {formatPlayerStatus(player.status)}
                     </span>
                   </div>
                 );
@@ -634,25 +1119,33 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   Not joined yet
                 </h2>
                 <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>
-                  {canManage ? "Tap Add to include them in this session." : "Squad members who haven't joined this session."}
+                  {canManage ? "Add players for this session, one at a time or all at once." : "Squad members who haven't joined this session."}
                 </p>
               </div>
-              <span style={{
-                minWidth: 34,
-                height: 34,
-                padding: "0 0.65rem",
-                borderRadius: "var(--r-pill)",
-                background: "var(--surface-sunken)",
-                border: "1px solid var(--border)",
-                color: "var(--text-2)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 900,
-                fontSize: "0.875rem",
-              }}>
-                {rosterNotInSession.length}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
+                <span style={{
+                  minWidth: 34, height: 34, padding: "0 0.65rem", borderRadius: "var(--r-pill)",
+                  background: "var(--surface-sunken)", border: "1px solid var(--border)", color: "var(--text-2)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: "0.875rem",
+                }}>
+                  {rosterNotInSession.length}
+                </span>
+                {canManage && rosterNotInSession.length > 0 && (
+                  <button
+                    type="button"
+                    data-testid="roster-add-all-btn"
+                    disabled={isAddingAll || addingId !== null}
+                    onClick={handleAddAllToSession}
+                    style={{
+                      minHeight: 34, padding: "0 0.75rem", border: "none", borderRadius: "var(--r-md)",
+                      background: isAddingAll ? "var(--n-200)" : "var(--ink-800)", color: "var(--volt-500)",
+                      fontWeight: 900, fontSize: "0.8125rem", cursor: isAddingAll ? "wait" : "pointer", whiteSpace: "nowrap",
+                    }}
+                  >
+                    {isAddingAll ? "Adding all..." : "Add all"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {addError && (
@@ -746,6 +1239,56 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {canManage && (
+              <div style={{ marginTop: "0.875rem", paddingTop: "0.875rem", borderTop: "1px solid var(--border)" }}>
+                <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900, marginBottom: "0.25rem" }}>
+                  Add a guest
+                </h3>
+                <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginBottom: "0.625rem" }}>
+                  For this session only. Their session results will be available here, but they will not appear in lifetime or overall rankings.
+                </p>
+                {guestError && (
+                  <p role="alert" style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 700, marginBottom: "0.625rem" }}>{guestError}</p>
+                )}
+                <form onSubmit={handleAddGuest} className="pb-guest-add-form">
+                  <input
+                    data-testid="session-detail-guest-name-input"
+                    className="pb-input"
+                    type="text"
+                    placeholder="Guest name"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    required
+                    style={{ height: 44, borderRadius: "var(--r-md)" }}
+                  />
+                  <select
+                    className="pb-input"
+                    value={guestSkill}
+                    onChange={(e) => setGuestSkill(e.target.value)}
+                    style={{ height: 44, borderRadius: "var(--r-md)" }}
+                    aria-label="Guest skill"
+                  >
+                    <option value="unknown">Skill: Unknown</option>
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                  <button
+                    type="submit"
+                    data-testid="session-detail-guest-add-btn"
+                    disabled={!guestName.trim() || isAddingGuest}
+                    style={{
+                      minHeight: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)",
+                      background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900,
+                      opacity: guestName.trim() && !isAddingGuest ? 1 : 0.5, cursor: isAddingGuest ? "wait" : "pointer", whiteSpace: "nowrap",
+                    }}
+                  >
+                    {isAddingGuest ? "Adding..." : "Add guest"}
+                  </button>
+                </form>
               </div>
             )}
           </section>

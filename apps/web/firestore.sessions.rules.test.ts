@@ -29,7 +29,8 @@ describe("Firestore Rules: Sessions", () => {
       const db = context.firestore();
 
       // Setup group
-      await setDoc(doc(db, "groups/g1"), { name: "G1", memberIds: ["org1", "mem1"] });
+      await setDoc(doc(db, "groups/g1"), { name: "G1", memberIds: ["admin1", "org1", "mem1"] });
+      await setDoc(doc(db, "groups/g1/members/admin1"), { userId: "admin1", role: "admin" });
       await setDoc(doc(db, "groups/g1/members/org1"), { userId: "org1", role: "organiser" });
       await setDoc(doc(db, "groups/g1/members/mem1"), { userId: "mem1", role: "member" });
 
@@ -45,7 +46,13 @@ describe("Firestore Rules: Sessions", () => {
   }
 
   describe("session document access", () => {
-    it("allows organiser to create session", async () => {
+    it("allows admin to create session", async () => {
+      await setupGroupAndSession();
+      const db = env.authenticatedContext("admin1").firestore();
+      await assertSucceeds(setDoc(doc(db, "sessions/s2"), { groupId: "g1", name: "S2" }));
+    });
+
+    it("keeps legacy organiser session access", async () => {
       await setupGroupAndSession();
       const db = env.authenticatedContext("org1").firestore();
       await assertSucceeds(setDoc(doc(db, "sessions/s2"), { groupId: "g1", name: "S2" }));
@@ -97,10 +104,16 @@ describe("Firestore Rules: Sessions", () => {
   });
 
   describe("joinRequests subcollection", () => {
-    it("allows organiser to read join request", async () => {
+    it("allows admin to read join request", async () => {
       await setupGroupAndSession();
-      const db = env.authenticatedContext("org1").firestore();
+      const db = env.authenticatedContext("admin1").firestore();
       await assertSucceeds(getDoc(doc(db, "sessions/s1/joinRequests/r1")));
+    });
+
+    it("denies regular member access to applicant details", async () => {
+      await setupGroupAndSession();
+      const db = env.authenticatedContext("mem1").firestore();
+      await assertFails(getDoc(doc(db, "sessions/s1/joinRequests/r1")));
     });
 
     it("denies client to create join request directly", async () => {

@@ -35,7 +35,7 @@ beforeEach(async () => {
     await setDoc(doc(db, "groups", "group1"), {
       name: "Test Group",
       createdBy: "owner1",
-      memberIds: ["owner1", "organiser1", "member1"],
+      memberIds: ["owner1", "admin1", "organiser1", "member1"],
     });
     await setDoc(doc(db, "groups", "group1", "members", "owner1"), {
       userId: "owner1",
@@ -45,9 +45,18 @@ beforeEach(async () => {
       userId: "organiser1",
       role: "organiser",
     });
+    await setDoc(doc(db, "groups", "group1", "members", "admin1"), {
+      userId: "admin1",
+      role: "admin",
+    });
     await setDoc(doc(db, "groups", "group1", "members", "member1"), {
       userId: "member1",
       role: "member",
+    });
+    await setDoc(doc(db, "groups", "group1", "joinRequests", "requester1"), {
+      userId: "requester1",
+      email: "requester@example.com",
+      status: "pending",
     });
   });
 });
@@ -117,9 +126,31 @@ describe("groups security rules", () => {
     );
   });
 
-  it("denies organiser to write members", async () => {
-    const organiser = env.authenticatedContext("organiser1").firestore();
+  it("allows admin to add and remove regular members", async () => {
+    const admin = env.authenticatedContext("admin1").firestore();
+    const memberRef = doc(admin, "groups", "group1", "members", "newMember");
+    await assertSucceeds(
+      setDoc(memberRef, {
+        userId: "newMember",
+        role: "member",
+      })
+    );
+    await assertSucceeds(deleteDoc(memberRef));
+  });
+
+  it("denies admin from appointing another admin", async () => {
+    const admin = env.authenticatedContext("admin1").firestore();
     await assertFails(
+      setDoc(doc(admin, "groups", "group1", "members", "newAdmin"), {
+        userId: "newAdmin",
+        role: "admin",
+      })
+    );
+  });
+
+  it("keeps legacy organiser records at admin level", async () => {
+    const organiser = env.authenticatedContext("organiser1").firestore();
+    await assertSucceeds(
       setDoc(doc(organiser, "groups", "group1", "members", "newMember"), {
         userId: "newMember",
         role: "member",
@@ -127,10 +158,10 @@ describe("groups security rules", () => {
     );
   });
 
-  it("allows organiser to write players", async () => {
-    const organiser = env.authenticatedContext("organiser1").firestore();
+  it("allows admin to write players", async () => {
+    const admin = env.authenticatedContext("admin1").firestore();
     await assertSucceeds(
-      addDoc(collection(organiser, "groups", "group1", "players"), {
+      addDoc(collection(admin, "groups", "group1", "players"), {
         displayName: "New Player",
       })
     );
@@ -145,15 +176,15 @@ describe("groups security rules", () => {
     );
   });
 
-  it("allows organiser to write venues and courts", async () => {
-    const organiser = env.authenticatedContext("organiser1").firestore();
+  it("allows admin to write venues and courts", async () => {
+    const admin = env.authenticatedContext("admin1").firestore();
     const venueRef = await assertSucceeds(
-      addDoc(collection(organiser, "groups", "group1", "venues"), {
+      addDoc(collection(admin, "groups", "group1", "venues"), {
         name: "New Venue",
       })
     );
     await assertSucceeds(
-      addDoc(collection(organiser, "groups", "group1", "venues", venueRef.id, "courts"), {
+      addDoc(collection(admin, "groups", "group1", "venues", venueRef.id, "courts"), {
         name: "Court 1",
       })
     );
@@ -166,6 +197,14 @@ describe("groups security rules", () => {
         name: "New Venue",
       })
     );
+  });
+
+  it("allows admins to read join requests but hides them from members", async () => {
+    const admin = env.authenticatedContext("admin1").firestore();
+    const member = env.authenticatedContext("member1").firestore();
+    const requestPath = "groups/group1/joinRequests/requester1";
+    await assertSucceeds(getDoc(doc(admin, requestPath)));
+    await assertFails(getDoc(doc(member, requestPath)));
   });
 
 });

@@ -37,7 +37,7 @@ export async function ensureGlobalPlayer(
     if (!snap.exists) {
       t.set(ref, {
         uid: user.uid,
-        displayName: displayName || user.email?.split("@")[0] || "Player",
+        displayName: displayName.trim() || "Player",
         isGuest: false,
         totalGames: 0,
         totalWins: 0,

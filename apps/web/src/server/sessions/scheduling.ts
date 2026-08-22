@@ -1,6 +1,6 @@
 import "server-only";
 import type { EngineState, EnginePlayer, EngineCourt, GeneratedMatch, GeneratedSitOut } from "@picklebaddies/match-engine";
-import { createInitialState, buildRound, seededOrder, DEFAULT_SEED } from "@picklebaddies/match-engine";
+import { createInitialState, buildRound, seededOrder, DEFAULT_SEED, recordMatch, recordSitOut } from "@picklebaddies/match-engine";
 import { isSchedulable, type ScoringMode, type SessionPlayerStatus } from "@picklebaddies/domain";
 
 /**
@@ -12,6 +12,7 @@ import { isSchedulable, type ScoringMode, type SessionPlayerStatus } from "@pick
 export interface FirestoreEngineState {
   gamesPlayed: Record<string, number>;
   sitOuts: Record<string, number>;
+  playStreak?: Record<string, number>;
   lastSitOutRound: Record<string, number>;
   partnerCount: Record<string, number>;
   opponentCount: Record<string, number>;
@@ -26,6 +27,7 @@ export function serializeEngineState(state: EngineState): FirestoreEngineState {
   return {
     gamesPlayed: rec(state.gamesPlayed),
     sitOuts: rec(state.sitOuts),
+    playStreak: rec(state.playStreak),
     lastSitOutRound: rec(state.lastSitOutRound),
     partnerCount: rec(state.partnerCount),
     opponentCount: rec(state.opponentCount),
@@ -40,6 +42,7 @@ export function deserializeEngineState(data: FirestoreEngineState | undefined, p
   return {
     gamesPlayed: new Map(Object.entries(data.gamesPlayed ?? {})),
     sitOuts: new Map(Object.entries(data.sitOuts ?? {})),
+    playStreak: new Map(Object.entries(data.playStreak ?? {})),
     lastSitOutRound: new Map(Object.entries(data.lastSitOutRound ?? {})),
     partnerCount: new Map(Object.entries(data.partnerCount ?? {})),
     opponentCount: new Map(Object.entries(data.opponentCount ?? {})),
@@ -91,6 +94,54 @@ export function buildSitOutDocs(sitOuts: GeneratedSitOut[]) {
   return sitOuts;
 }
 
+export function buildEngineStateFromAssignments(
+  players: EnginePlayer[],
+  matches: Array<{
+    status?: string;
+    roundNumber?: number;
+    teamAIds?: string[];
+    teamBIds?: string[];
+    teamA?: Array<{ playerId: string }>;
+    teamB?: Array<{ playerId: string }>;
+  }>,
+  sitOuts: Array<{ playerId?: string; roundNumber?: number }> = [],
+): EngineState {
+  const state = createInitialState(players);
+  const matchEvents = matches
+    .filter((m) => m.status === "completed" || m.status === "scheduled")
+    .map((m) => {
+      const teamA = (m.teamAIds ?? m.teamA?.map((p) => p.playerId) ?? []) as string[];
+      const teamB = (m.teamBIds ?? m.teamB?.map((p) => p.playerId) ?? []) as string[];
+      return { type: "match" as const, roundNumber: m.roundNumber ?? 0, teamA, teamB };
+    })
+    .filter((m) => m.teamA.length === 2 && m.teamB.length === 2);
+
+  const sitOutEvents = sitOuts
+    .filter((sitOut) => sitOut.playerId && typeof sitOut.roundNumber === "number")
+    .map((sitOut) => ({ type: "sitOut" as const, roundNumber: sitOut.roundNumber!, playerId: sitOut.playerId! }));
+
+  const events = [...matchEvents, ...sitOutEvents].sort((a, b) => {
+    const round = a.roundNumber - b.roundNumber;
+    if (round !== 0) return round;
+    return a.type === b.type ? 0 : a.type === "match" ? -1 : 1;
+  });
+
+  for (const event of events) {
+    if (event.type === "match") {
+      recordMatch(
+        state,
+        event.roundNumber,
+        [event.teamA[0]!, event.teamA[1]!] as [string, string],
+        [event.teamB[0]!, event.teamB[1]!] as [string, string],
+      );
+    } else {
+      recordSitOut(state, event.playerId, event.roundNumber);
+    }
+  }
+
+  return state;
+}
+
 /**
  * Points are always optional — a match can be finished with just a winner
  * tap, regardless of the session's scoring mode. If points are given, they
@@ -134,19 +185,19 @@ export async function readAutoFillInputs(
   completingMatchId: string,
 ): Promise<AutoFillInputs | null> {
   const sessionRef = db.doc(`sessions/${sessionId}`);
-  const [sessionSnap, scheduledSnap, stateSnap, playersSnap] = await Promise.all([
+  const [sessionSnap, matchesSnap, sitOutsSnap, playersSnap] = await Promise.all([
     t.get(sessionRef),
-    t.get(db.collection(`sessions/${sessionId}/matches`).where("status", "==", "scheduled")),
-    t.get(db.doc(`sessions/${sessionId}/engine/state`)),
+    t.get(db.collection(`sessions/${sessionId}/matches`)),
+    t.get(db.collection(`sessions/${sessionId}/sitOuts`)),
     t.get(db.collection(`sessions/${sessionId}/players`)),
   ]);
   const session = sessionSnap.data()!;
 
-  const otherScheduled = scheduledSnap.docs.filter((d) => d.id !== completingMatchId);
-  const occupiedCourtIds = new Set(otherScheduled.map((d) => d.data().courtId as string));
+  const matches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const otherScheduled = matches.filter((m: any) => m.id !== completingMatchId && m.status === "scheduled");
+  const occupiedCourtIds = new Set(otherScheduled.map((m: any) => m.courtId as string));
   const busyPlayerIds = new Set(
-    otherScheduled.flatMap((d) => {
-      const m = d.data();
+    otherScheduled.flatMap((m: any) => {
       return [...(m.teamAIds ?? []), ...(m.teamBIds ?? [])] as string[];
     }),
   );
@@ -160,7 +211,11 @@ export async function readAutoFillInputs(
 
   if (idlePlayers.length < 4 || freedCourts.length === 0) return null;
 
-  const state = deserializeEngineState(stateSnap.data() as FirestoreEngineState | undefined, enginePlayers);
+  const state = buildEngineStateFromAssignments(
+    enginePlayers,
+    matches as any[],
+    sitOutsSnap.docs.map((d) => d.data() as any),
+  );
   const nameById = new Map(players.map((p: any) => [p.id, p.displayName ?? "Player"]));
   const courtNameById = new Map(engineCourts.map((c) => [c.courtId, c.name]));
   const cycle = session.nextCycleNumber || 2;

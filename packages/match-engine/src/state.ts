@@ -3,6 +3,8 @@ import type { EnginePlayer, LockedMatch } from "./types.js";
 export interface EngineState {
   gamesPlayed: Map<string, number>;
   sitOuts: Map<string, number>;
+  /** Consecutive scheduled games played since the player's last sit-out. */
+  playStreak: Map<string, number>;
   /** lastSitOutRound: tracks the most recent round in which each player sat out.
    *  Used by the Hard Sit-Out Shield to detect and prevent consecutive sit-outs. */
   lastSitOutRound: Map<string, number>;
@@ -19,11 +21,15 @@ export function pairKey(a: string, b: string): string {
 
 export function createInitialState(players: EnginePlayer[]): EngineState {
   const s: EngineState = {
-    gamesPlayed: new Map(), sitOuts: new Map(), lastSitOutRound: new Map(),
+    gamesPlayed: new Map(), sitOuts: new Map(), playStreak: new Map(), lastSitOutRound: new Map(),
     partnerCount: new Map(), opponentCount: new Map(), lastPartner: new Map(),
     lastOpponents: new Map(), lastPlayedRound: new Map(),
   };
-  for (const p of players) { s.gamesPlayed.set(p.playerId, 0); s.sitOuts.set(p.playerId, 0); }
+  for (const p of players) {
+    s.gamesPlayed.set(p.playerId, 0);
+    s.sitOuts.set(p.playerId, 0);
+    s.playStreak.set(p.playerId, 0);
+  }
   return s;
 }
 
@@ -33,7 +39,11 @@ const inc = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ??
 export function recordMatch(
   s: EngineState, roundNumber: number, teamA: [string, string], teamB: [string, string],
 ): void {
-  for (const id of [...teamA, ...teamB]) { inc(s.gamesPlayed, id); s.lastPlayedRound.set(id, roundNumber); }
+  for (const id of [...teamA, ...teamB]) {
+    inc(s.gamesPlayed, id);
+    inc(s.playStreak, id);
+    s.lastPlayedRound.set(id, roundNumber);
+  }
   inc(s.partnerCount, pairKey(teamA[0], teamA[1]));
   inc(s.partnerCount, pairKey(teamB[0], teamB[1]));
   for (const a of teamA) for (const b of teamB) inc(s.opponentCount, pairKey(a, b));
@@ -46,6 +56,7 @@ export function recordMatch(
 /** Record a sit-out for a player in a given round, updating lastSitOutRound. */
 export function recordSitOut(s: EngineState, playerId: string, roundNumber: number): void {
   s.sitOuts.set(playerId, (s.sitOuts.get(playerId) ?? 0) + 1);
+  s.playStreak.set(playerId, 0);
   s.lastSitOutRound.set(playerId, roundNumber);
 }
 

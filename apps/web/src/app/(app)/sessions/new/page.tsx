@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createSession } from "@/server/sessions/actions";
 import { getOrCreateDefaultSquad } from "@/server/squads/actions";
 import { getSportConfig } from "@picklebaddies/domain";
@@ -14,6 +14,7 @@ const ESTIMATED_GAME_MINUTES = 15;
 
 export default function NewSessionPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { sport: preferredSport, isLoaded: prefLoaded } = useSportPreference();
 
@@ -56,6 +57,13 @@ export default function NewSessionPage() {
       () => { setGroups([]); setGroupsLoaded(true); },
     );
   }, [user]);
+
+  useEffect(() => {
+    const requestedGroupId = searchParams.get("groupId");
+    if (groupsLoaded && requestedGroupId && groups.some((group) => group.id === requestedGroupId)) {
+      setGroupId(requestedGroupId);
+    }
+  }, [groups, groupsLoaded, searchParams]);
 
   // When selected squad changes, watch its venues and auto-prefill Home Venue
   useEffect(() => {
@@ -111,7 +119,7 @@ export default function NewSessionPage() {
       });
       if (!result) throw new Error("No response from server — check admin SDK config");
       if (!result.ok) throw new Error(result.message);
-      router.push(`/sessions/${result.data.sessionId}`);
+      router.push(`/sessions/${result.data.sessionId}/live`);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to create session");

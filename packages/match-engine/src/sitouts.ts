@@ -14,7 +14,8 @@ export interface SitOutResult { playing: string[]; sitting: string[]; }
  * Tie-break order within shield groups:
  *   1. Fewer total sit-outs → sit first (equalize)
  *   2. More games played → sit first (give rest to overplayed)
- *   3. Seeded deterministic order as final tiebreak
+ *   3. Higher play streak → sit first (soft two-game rhythm)
+ *   4. Seeded deterministic order as final tiebreak
  */
 export function selectSitOuts(
   s: EngineState, available: string[], courtCount: number,
@@ -42,6 +43,10 @@ export function selectSitOuts(
     // More games played → sit first (give rest)
     const gp = (s.gamesPlayed.get(y) ?? 0) - (s.gamesPlayed.get(x) ?? 0);
     if (gp !== 0) return gp;
+    // Soft rhythm: after fairness is equal, prefer resting players who have
+    // played about two games in a row. Cap at 2 so long streaks do not dominate.
+    const rhythm = Math.min(s.playStreak.get(y) ?? 0, 2) - Math.min(s.playStreak.get(x) ?? 0, 2);
+    if (rhythm !== 0) return rhythm;
     // Deterministic tiebreak
     return (order.get(x) ?? 0) - (order.get(y) ?? 0) || (x < y ? -1 : x > y ? 1 : 0);
   });

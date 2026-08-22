@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createInitialState, seedStateFromLocked, pairKey, recordMatch } from "./state.js";
+import { createInitialState, seedStateFromLocked, pairKey, recordMatch, recordSitOut } from "./state.js";
 import type { EnginePlayer, LockedMatch } from "./types.js";
 
 const players: EnginePlayer[] = ["p1","p2","p3","p4"].map((id) => ({
@@ -11,6 +11,7 @@ describe("engine state", () => {
     const s = createInitialState(players);
     expect(s.gamesPlayed.get("p1")).toBe(0);
     expect(s.sitOuts.get("p1")).toBe(0);
+    expect(s.playStreak.get("p1")).toBe(0);
   });
   it("pairKey is order-independent", () => {
     expect(pairKey("p2","p1")).toBe(pairKey("p1","p2"));
@@ -19,7 +20,21 @@ describe("engine state", () => {
     const locked: LockedMatch[] = [{ roundNumber: 1, courtId: "c1", teamA: ["p1","p2"], teamB: ["p3","p4"] }];
     const s = seedStateFromLocked(players, locked);
     expect(s.gamesPlayed.get("p1")).toBe(1);
+    expect(s.playStreak.get("p1")).toBe(1);
     expect(s.partnerCount.get(pairKey("p1","p2"))).toBe(1);
     expect(s.opponentCount.get(pairKey("p1","p3"))).toBe(1);
+  });
+
+  it("tracks consecutive played games and resets when sitting out", () => {
+    const s = createInitialState(players);
+
+    recordMatch(s, 1, ["p1", "p2"], ["p3", "p4"]);
+    expect(s.playStreak.get("p1")).toBe(1);
+
+    recordMatch(s, 2, ["p1", "p3"], ["p2", "p4"]);
+    expect(s.playStreak.get("p1")).toBe(2);
+
+    recordSitOut(s, "p1", 3);
+    expect(s.playStreak.get("p1")).toBe(0);
   });
 });

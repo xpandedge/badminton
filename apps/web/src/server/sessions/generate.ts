@@ -35,7 +35,7 @@ export async function generateSchedule(
       const memberSnap = await t.get(db.doc(`groups/${s.groupId}/members/${session.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canGenerateSchedule(role)) {
-        throw Object.assign(new Error("Must be a squad member to generate schedule"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can generate games"), { code: "FORBIDDEN" });
       }
       if (s.status !== "draft" && s.status !== "scheduled") {
         throw Object.assign(

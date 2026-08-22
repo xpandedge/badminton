@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -8,6 +8,7 @@ import { signOutUser } from "@/lib/auth/sign-in";
 import { SportPreferenceProvider, useSportPreference } from "@/lib/sport/SportPreferenceContext";
 import { SportPickerModal } from "@/components/SportPickerModal";
 import { Logo } from "@/components/Logo";
+import { PlayerNameDialog } from "@/components/PlayerNameDialog";
 
 function SportBadge() {
   const { sport, isLoaded, openPicker } = useSportPreference();
@@ -126,7 +127,7 @@ function NavBar() {
         }}>Session</span>
       </Link>
 
-      {/* Groups */}
+      {/* Squads */}
       <Link
         href="/groups"
         style={{
@@ -151,7 +152,7 @@ function NavBar() {
           letterSpacing: "0.08em",
           textTransform: "uppercase",
           color: isGroups ? "var(--volt-500)" : "var(--text-3)",
-        }}>Groups</span>
+        }}>Squads</span>
       </Link>
       {/* Help */}
       <Link
@@ -184,8 +185,10 @@ function NavBar() {
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, refreshUser } = useAuth();
   const router = useRouter();
+  const [showPlayerNameDialog, setShowPlayerNameDialog] = useState(false);
+  const closePlayerNameDialog = useCallback(() => setShowPlayerNameDialog(false), []);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/sign-in");
@@ -215,7 +218,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
-  const displayName = user.displayName ?? user.email ?? "Baddie";
+  const displayName = user.displayName?.trim() || "Player";
   const initials = displayName
     .split(" ")
     .map((p: string) => p[0])
@@ -286,10 +289,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           >
             Out
           </button>
-          <div style={{
+          <button
+            type="button"
+            title="Edit your player name"
+            aria-label="Edit your player name"
+            onClick={() => setShowPlayerNameDialog(true)}
+            style={{
             width: 32,
             height: 32,
             borderRadius: "50%",
+            border: "none",
             background: "var(--volt-500)",
             display: "grid",
             placeItems: "center",
@@ -297,9 +306,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             fontWeight: 900,
             fontSize: "0.6875rem",
             color: "var(--ink-800)",
+            cursor: "pointer",
+            padding: 0,
           }}>
             {initials}
-          </div>
+          </button>
         </div>
       </header>
 
@@ -308,6 +319,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       </main>
 
       <NavBar />
+      <PlayerNameDialog
+        currentName={user.displayName?.trim() ?? ""}
+        open={showPlayerNameDialog}
+        onClose={closePlayerNameDialog}
+        onSaved={refreshUser}
+      />
     </div>
     </SportPreferenceProvider>
   );

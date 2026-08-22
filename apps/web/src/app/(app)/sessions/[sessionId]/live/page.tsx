@@ -9,11 +9,15 @@ import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
 import { canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
+import { shareUrl } from "@/lib/config/site";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore } from "@/lib/sessions/scoring";
 import { QRCode } from "@/components/QRCode";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
 import { formatSessionStatus, formatScoringMode } from "@/lib/format/status";
+import { addGroupMemberToSession } from "@/server/sessions/players";
+import { ensureSessionRsvpLink } from "@/server/sessions/actions";
 
 function titleCase(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -45,7 +49,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [showBoardModal, setShowBoardModal] = useState(false);
   const [boardCopied, setBoardCopied] = useState(false);
+  const [rsvpCopied, setRsvpCopied] = useState(false);
+  const [isCreatingRsvpLink, setIsCreatingRsvpLink] = useState(false);
   const [selectedGroupPlayerId, setSelectedGroupPlayerId] = useState("");
+  const [addingGroupPlayerId, setAddingGroupPlayerId] = useState<string | null>(null);
+  const [isAddingAllPlayers, setIsAddingAllPlayers] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
   const [sessionGuestSkill, setSessionGuestSkill] = useState("unknown");
@@ -53,9 +61,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
+  const [scoringMatchIds, setScoringMatchIds] = useState<Set<string>>(() => new Set());
+  const scoringMatchIdsRef = useRef<Set<string>>(new Set());
 
   const leaderboardLogged = useRef(false);
   const { user } = useAuth();
+  const { confirm: requestConfirmation, confirmationDialog } = useConfirmDialog();
 
   useEffect(() => {
     if (!sessionId || !user) return;
@@ -102,6 +113,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     }
   }, [leaderboard.length, sessionId]);
 
+  useEffect(() => {
+    setScoringMatchIds((current) => {
+      if (current.size === 0) return current;
+      const stillOpen = new Set(
+        matches
+          .filter((match) => match.status === "scheduled" || match.status === "in_progress")
+          .map((match) => match.id),
+      );
+      const next = new Set([...current].filter((matchId) => stillOpen.has(matchId)));
+      scoringMatchIdsRef.current = next;
+      return next.size === current.size ? current : next;
+    });
+  }, [matches]);
+
   const role = useGroupRole(session?.groupId ?? null);
 
   if (!session) {
@@ -130,7 +155,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const boardEnabled = session.boardEnabled !== false;
   const boardPath = session.scoreCode ? `/board/${session.scoreCode}` : null;
-  const boardUrl = boardPath && typeof window !== "undefined" ? `${window.location.origin}${boardPath}` : boardPath ?? "";
+  const boardUrl = boardPath ? shareUrl(boardPath) : "";
+  const rsvpPath = session.rsvpCode ? `/rsvp/${session.rsvpCode}` : null;
+  const rsvpUrl = rsvpPath ? shareUrl(rsvpPath) : "";
 
   const handleShareBoard = async () => {
     if (!boardUrl) return;
@@ -149,6 +176,35 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     await navigator.clipboard?.writeText(boardUrl);
     setBoardCopied(true);
     setTimeout(() => setBoardCopied(false), 1600);
+  };
+
+  const handleCopyRsvpLink = async () => {
+    setActionError(null);
+    if (rsvpUrl) {
+      await navigator.clipboard?.writeText(rsvpUrl);
+      setRsvpCopied(true);
+      setTimeout(() => setRsvpCopied(false), 1600);
+      return;
+    }
+
+    if (isCreatingRsvpLink) return;
+    setIsCreatingRsvpLink(true);
+    try {
+      const result = await ensureSessionRsvpLink(sessionId);
+      if (!result.ok) {
+        setActionError(result.message);
+        return;
+      }
+      const nextPath = `/rsvp/${result.data.rsvpCode}`;
+      await navigator.clipboard?.writeText(shareUrl(nextPath));
+      setSession((current) => current ? { ...current, rsvpCode: result.data.rsvpCode, rsvpEnabled: true } : current);
+      setRsvpCopied(true);
+      setTimeout(() => setRsvpCopied(false), 1600);
+    } catch (error: any) {
+      setActionError(error?.message ?? "Could not create the RSVP link.");
+    } finally {
+      setIsCreatingRsvpLink(false);
+    }
   };
 
   // Generate + start are one step from the organiser's point of view — if no
@@ -179,7 +235,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       const res = await updatePlayerStatus({ sessionId, sessionPlayerId, status });
       const data = res.data;
       if (data.rebalanceRecommended) {
-        if (confirm("Player status changed. Re-pick current matches for the new roster?")) {
+        const confirmed = await requestConfirmation({
+          title: "Update the next games?",
+          description: "Current games and completed scores will stay put. New games will use the updated player list.",
+          confirmLabel: "Update games",
+        });
+        if (confirmed) {
           await handleRebalance(status === "left" || status === "removed" || status === "no_show" ? "player_removed" : "settings_changed");
         }
       }
@@ -187,7 +248,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   };
 
   const handleMarkInjured = async (sessionPlayerId: string, displayName: string) => {
-    if (!confirm(`Mark ${displayName} as Injured / Step Out? They will be removed from upcoming courts.`)) return;
+    const confirmed = await requestConfirmation({
+      title: `Step ${displayName} out?`,
+      description: "They will not be selected for more games in this session. Current and completed games stay unchanged.",
+      confirmLabel: "Step out",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setActionError(null);
     try {
       const res = await markPlayerInjured({ sessionId, sessionPlayerId });
@@ -211,6 +278,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const handleAddSessionGuest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sessionGuestName.trim() || isAddingSessionGuest) return;
+    const addedGuestName = sessionGuestName.trim();
     setIsAddingSessionGuest(true);
     setActionError(null);
     try {
@@ -218,7 +286,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       setSessionGuestName("");
       setSessionGuestSkill("unknown");
       if (res.data.rebalanceRecommended) {
-        if (confirm(`Guest "${sessionGuestName.trim()}" added. Update rotation to include them in upcoming courts?`)) {
+        const confirmed = await requestConfirmation({
+          title: `Add ${addedGuestName} to the next games?`,
+          description: "Current games will stay put. New games will include the updated player list.",
+          confirmLabel: "Update games",
+        });
+        if (confirmed) {
           await handleRebalance("player_added");
         }
       }
@@ -227,7 +300,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   };
 
   const handleDeleteSession = async () => {
-    if (!confirm("Are you sure you want to cancel/delete this session?")) return;
+    const confirmed = await requestConfirmation({
+      title: `Cancel ${session.name}?`,
+      description: "The session will close and can no longer be played. Completed scores will stay recorded.",
+      confirmLabel: "Cancel session",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setActionError(null);
     try {
       await deleteSession({ sessionId });
@@ -236,12 +315,23 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   };
 
   const handleDisableCourt = async (courtId: string, courtName: string) => {
-    if (!confirm(`Disable court "${courtName}"? This cannot be undone without a rebalance.`)) return;
+    const confirmed = await requestConfirmation({
+      title: `Disable ${courtName}?`,
+      description: "No more games will be assigned to this court. Current and completed games stay unchanged.",
+      confirmLabel: "Disable court",
+      tone: "danger",
+    });
+    if (!confirmed) return;
     setActionError(null);
     try {
       const res = await disableCourt({ sessionId, courtId });
       if ((res.data as any).rebalanceRecommended) {
-        if (confirm("Court disabled. Re-pick current matches to redistribute?")) {
+        const updateGames = await requestConfirmation({
+          title: "Update the next games?",
+          description: "New games will be redistributed across the remaining courts.",
+          confirmLabel: "Update games",
+        });
+        if (updateGames) {
           await handleRebalance("settings_changed");
         }
       }
@@ -259,6 +349,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   // Points are always optional — a winner tap alone is enough to finish a
   // game; if valid points were entered, the winner is derived from them.
   const submitWinner = async (matchId: string, winnerTeam: "A" | "B") => {
+    if (scoringMatchIdsRef.current.has(matchId)) return;
+    scoringMatchIdsRef.current.add(matchId);
+    setScoringMatchIds((current) => new Set(current).add(matchId));
     setActionError(null);
     const pts = pointInputs[matchId];
     const a = pts?.a ? Number(pts.a) : undefined;
@@ -272,7 +365,15 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         delete next[matchId];
         return next;
       });
-    } catch (err: any) { setActionError(err.message); }
+    } catch (err: any) {
+      setActionError(err.message);
+      scoringMatchIdsRef.current.delete(matchId);
+      setScoringMatchIds((current) => {
+        const next = new Set(current);
+        next.delete(matchId);
+        return next;
+      });
+    }
   };
 
   const activeCourts = (session.courts ?? []).filter((c) => c.isActive);
@@ -280,6 +381,10 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const activePlayers = players.filter((p) => p.status === "active" || p.status === "checked_in");
   const otherPlayers = players.filter((p) => p.status !== "active" && p.status !== "checked_in");
+  const sessionPlayerIds = new Set(players.flatMap((player) => [player.id, player.playerId]));
+  const availableGroupPlayers = groupPlayers.filter(
+    (player) => !sessionPlayerIds.has(player.id) && !sessionPlayerIds.has(player.userId ?? "__none__"),
+  );
 
   const scheduledMatches = matches.filter((m) => m.status === "scheduled");
   const scheduledByCourtId = new Map(scheduledMatches.map((m) => [m.courtId, m]));
@@ -293,6 +398,57 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   // Games played per active player (from the live leaderboard) → fairness at a glance.
   const gamesById = new Map<string, number>(leaderboard.map((r: any) => [r.playerId, r.gamesPlayed ?? 0]));
   const gamesFor = (id: string) => gamesById.get(id) ?? 0;
+
+  // Is the signed-in user already in this session as a player?
+  const currentUserInSession = user
+    ? players.some((p) => p.playerId === user.uid)
+    : false;
+
+  // The current user's group player record (needed to self-join).
+  const currentUserGroupPlayer = user
+    ? groupPlayers.find((p) => p.userId === user.uid)
+    : null;
+
+  const handleSelfJoin = async () => {
+    if (!currentUserGroupPlayer) return;
+    setActionError(null);
+    try {
+      const res = await addGroupMemberToSession(sessionId, currentUserGroupPlayer.id);
+      if (!res.ok) throw new Error(res.message);
+      if (isLive) await handleRebalance("player_added");
+    } catch (e: any) { setActionError(e.message); }
+  };
+
+  const handleAddGroupPlayer = async (player: { id: string; displayName: string }) => {
+    setAddingGroupPlayerId(player.id);
+    setActionError(null);
+    try {
+      const result = await addGroupMemberToSession(sessionId, player.id);
+      if (!result.ok) throw new Error(result.message);
+      if (isLive) await handleRebalance("player_added");
+    } catch (e: any) {
+      setActionError(e.message || "Could not add player.");
+    } finally {
+      setAddingGroupPlayerId(null);
+    }
+  };
+
+  const handleAddAllGroupPlayers = async () => {
+    if (availableGroupPlayers.length === 0 || isAddingAllPlayers) return;
+    setIsAddingAllPlayers(true);
+    setActionError(null);
+    const results = await Promise.allSettled(
+      availableGroupPlayers.map((player) => addGroupMemberToSession(sessionId, player.id)),
+    );
+    const failed = results.filter(
+      (result) => result.status === "rejected" || (result.status === "fulfilled" && !result.value.ok),
+    );
+    if (failed.length > 0) {
+      setActionError(`${failed.length} player${failed.length === 1 ? "" : "s"} could not be added. Try adding them individually.`);
+    }
+    if (isLive && failed.length < results.length) await handleRebalance("player_added");
+    setIsAddingAllPlayers(false);
+  };
   const activeGameCounts = activePlayers.map((p) => gamesFor(p.playerId));
   const gamesSpread = activeGameCounts.length > 0 ? Math.max(...activeGameCounts) - Math.min(...activeGameCounts) : null;
 
@@ -320,12 +476,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   function renderMatchCard(m: any) {
     const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
+    const isScoring = scoringMatchIds.has(m.id);
     const inMatch = new Set<string>([
       ...m.teamA.map((p: any) => p.playerId),
       ...m.teamB.map((p: any) => p.playerId),
     ]);
+    const assignedToAnotherCourt = new Set<string>(
+      scheduledMatches
+        .filter((match) => match.id !== m.id)
+        .flatMap((match) => [...(match.teamAIds ?? []), ...(match.teamBIds ?? [])]),
+    );
     const eligibleForSwap = players.filter(
-      (p) => !inMatch.has(p.playerId) && (p.status === "active" || p.status === "checked_in")
+      (p) => !inMatch.has(p.playerId)
+        && !assignedToAnotherCourt.has(p.playerId)
+        && (p.status === "active" || p.status === "checked_in")
     );
     const renderSwap = (p: any, alignRight: boolean) => {
       return (
@@ -373,7 +537,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             fontWeight: 900,
             whiteSpace: "nowrap",
           }}>
-            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Done" : formatSessionStatus(m.status)}
+            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Done" : m.status === "scheduled" ? "Current" : formatSessionStatus(m.status)}
           </span>
         </div>
         <div style={{
@@ -411,12 +575,35 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           const a = pts?.a ? Number(pts.a) : undefined;
           const b = pts?.b ? Number(pts.b) : undefined;
           const hasValidPoints = typeof a === "number" && !Number.isNaN(a) && typeof b === "number" && !Number.isNaN(b) && a !== b;
+          if (isScoring) {
+            return (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  minHeight: 44,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "0.625rem",
+                  borderRadius: "var(--r-md)",
+                  background: "var(--ink-800)",
+                  color: "var(--volt-500)",
+                  fontWeight: 900,
+                }}
+              >
+                <span className="pb-score-loader" aria-hidden="true" />
+                Loading next game...
+              </div>
+            );
+          }
           return (
             <div style={{ display: "grid", gap: "0.5rem" }}>
               {session!.scoringMode === "points" && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: "0.5rem", alignItems: "center" }}>
                   <input
                     data-testid="score-team-a-input" type="number" placeholder="Points"
+                    disabled={isScoring}
                     value={pts?.a ?? ""}
                     onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: e.target.value, b: prev[m.id]?.b ?? "" } }))}
                     className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
@@ -424,6 +611,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   <span style={{ textAlign: "center", color: "var(--text-3)", fontFamily: "var(--font-mono)", fontWeight: 900 }}>VS</span>
                   <input
                     data-testid="score-team-b-input" type="number" placeholder="Points"
+                    disabled={isScoring}
                     value={pts?.b ?? ""}
                     onChange={(e) => setPointInputs((prev) => ({ ...prev, [m.id]: { a: prev[m.id]?.a ?? "", b: e.target.value } }))}
                     className="pb-input" style={{ height: 42, borderRadius: "var(--r-md)", padding: "0 0.625rem" }}
@@ -431,13 +619,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 </div>
               )}
               {hasValidPoints ? (
-                <button data-testid="save-score-btn" onClick={() => submitWinner(m.id, a! > b! ? "A" : "B")} style={primaryActionStyle}>
+                <button data-testid="save-score-btn" disabled={isScoring} onClick={() => submitWinner(m.id, a! > b! ? "A" : "B")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>
                   Save Score — {a! > b! ? "A" : "B"} Wins
                 </button>
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                  <button data-testid="score-winner-a" onClick={() => submitWinner(m.id, "A")} style={primaryActionStyle}>A Wins</button>
-                  <button data-testid="score-winner-b" onClick={() => submitWinner(m.id, "B")} style={primaryActionStyle}>B Wins</button>
+                  <button data-testid="score-winner-a" disabled={isScoring} onClick={() => submitWinner(m.id, "A")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>A Wins</button>
+                  <button data-testid="score-winner-b" disabled={isScoring} onClick={() => submitWinner(m.id, "B")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>B Wins</button>
                 </div>
               )}
             </div>
@@ -583,7 +771,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </div>
       )}
 
-      {/* Session control buttons */}
+      {/* Session control */}
       <section style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
@@ -597,11 +785,45 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
           <div>
             <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-              Session Controls
+              {session.name}
             </h2>
-            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Generate, run courts, and rebalance current matches.</p>
+            <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>
+              {session.status === "active" || session.status === "paused"
+                ? "Score games, manage courts and players."
+                : session.status === "completed"
+                  ? "Session finished — scores are locked."
+                  : "Get players on court, then hit Start Playing."}
+            </p>
           </div>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", justifyContent: "flex-end" }}>
+            {canManageLive && (
+              <button
+                type="button"
+                onClick={handleCopyRsvpLink}
+                disabled={isCreatingRsvpLink}
+                title={rsvpUrl || "Create and copy RSVP link"}
+                style={{
+                  height: 42,
+                  padding: "0 0.875rem",
+                  borderRadius: "var(--r-md)",
+                  background: "var(--volt-500)",
+                  color: "var(--ink-800)",
+                  border: "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  fontWeight: 900,
+                  cursor: isCreatingRsvpLink ? "default" : "pointer",
+                  opacity: isCreatingRsvpLink ? 0.6 : 1,
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+                {isCreatingRsvpLink ? "Creating..." : rsvpCopied ? "Copied" : rsvpPath ? "RSVP Link" : "Create RSVP"}
+              </button>
+            )}
             {boardEnabled && boardPath && (
               <button
                 type="button"
@@ -629,35 +851,17 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 Show Board
               </button>
             )}
-            <a href={`/sessions/${sessionId}`} style={{
-              height: 42,
-              padding: "0 0.875rem",
-              borderRadius: "var(--r-md)",
-              background: "var(--surface-sunken)",
-              color: "var(--text-1)",
-              display: "inline-flex",
-              alignItems: "center",
-              fontWeight: 900,
-            }}>
-              Session Details
-            </a>
           </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.625rem" }}>
         {canControlSession && (session.status === "draft" || session.status === "scheduled") && (
-          <button data-testid="start-session-btn" onClick={handleStart} style={primaryActionStyle}>Start Session</button>
+          <button data-testid="start-session-btn" onClick={handleStart} style={primaryActionStyle}>Start Playing</button>
         )}
         {canControlSession && session.status === "active" && (
-          <>
-            <button onClick={() => pauseSession({ sessionId })} style={secondaryActionStyle}>Pause</button>
-            <button data-testid="complete-session-btn" onClick={() => completeSession({ sessionId })} style={{ ...secondaryActionStyle, color: "var(--danger)" }}>Complete Session</button>
-          </>
+          <button data-testid="complete-session-btn" onClick={() => completeSession({ sessionId })} style={{ ...secondaryActionStyle, color: "var(--danger)" }}>Complete Session</button>
         )}
         {canControlSession && session.status === "paused" && (
-          <button onClick={() => resumeSession({ sessionId })} style={primaryActionStyle}>Resume</button>
-        )}
-        {canGenerate && isLive && (
-          <button data-testid="rebalance-btn" onClick={() => handleRebalance("manual_rebalance")} style={{ ...primaryActionStyle, background: "var(--volt-500)", color: "var(--ink-800)" }}>Re-pick Current Matches</button>
+          <button onClick={() => resumeSession({ sessionId })} style={primaryActionStyle}>Resume Playing</button>
         )}
         {canControlSession && (
           <button onClick={handleDeleteSession} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid rgba(240,62,62,0.3)" }}>
@@ -715,20 +919,105 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             automatically the instant it frees up. A bench strip answers "who's
             sitting out right now" and finished games sit below as history. */}
         <section style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
-          {matches.length === 0 && (
+          {matches.length === 0 && !isLive && canManageLive ? (
             <div style={{
               background: "var(--surface)",
               border: "2px dashed var(--border)",
               borderRadius: "var(--r-xl)",
-              padding: "2rem 1.25rem",
-              textAlign: "center",
+              padding: "1.25rem",
             }}>
-              <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "0.375rem" }}>
-                No matches yet
-              </h3>
-              <p style={{ color: "var(--text-2)" }}>Generate schedule after enough players join.</p>
+              <div style={{ marginBottom: "1rem" }}>
+                <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "0.25rem" }}>
+                  Get players on court
+                </h3>
+                <p style={{ color: "var(--text-2)", fontSize: "0.875rem" }}>Build tonight&apos;s lineup, then start when at least four players are ready.</p>
+              </div>
+
+              <div style={{ paddingBottom: "1rem", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                  In this session ({activePlayers.length})
+                </span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.625rem" }}>
+                  {activePlayers.map((player) => (
+                    <span key={player.id} style={{ padding: "0.45rem 0.7rem", borderRadius: "var(--r-pill)", background: "var(--surface-sunken)", border: "1px solid var(--border)", fontWeight: 800, fontSize: "0.8125rem" }}>
+                      {player.displayName}
+                    </span>
+                  ))}
+                  {activePlayers.length === 0 && <span style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>No players added yet.</span>}
+                </div>
+              </div>
+
+              <div style={{ padding: "1rem 0", borderBottom: "1px solid var(--border)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", marginBottom: "0.625rem" }}>
+                  <div>
+                    <h4 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900 }}>Squad players</h4>
+                    <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>{availableGroupPlayers.length} available</p>
+                  </div>
+                  {availableGroupPlayers.length > 0 && (
+                    <button
+                      type="button"
+                      data-testid="pre-session-add-all-btn"
+                      onClick={handleAddAllGroupPlayers}
+                      disabled={isAddingAllPlayers || addingGroupPlayerId !== null}
+                      style={{ ...primaryActionStyle, height: 38, opacity: isAddingAllPlayers ? 0.55 : 1 }}
+                    >
+                      {isAddingAllPlayers ? "Adding all..." : "Add all"}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "grid", gap: "0.5rem" }}>
+                  {availableGroupPlayers.map((player) => (
+                    <div key={player.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: "0.75rem", padding: "0.625rem 0.75rem", borderRadius: "var(--r-lg)", background: "var(--surface-sunken)", border: "1px solid var(--border)" }}>
+                      <span style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{player.displayName}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleAddGroupPlayer(player)}
+                        disabled={addingGroupPlayerId === player.id || isAddingAllPlayers}
+                        style={{ ...primaryActionStyle, height: 34, fontSize: "0.8125rem", opacity: addingGroupPlayerId === player.id || isAddingAllPlayers ? 0.55 : 1 }}
+                      >
+                        {addingGroupPlayerId === player.id ? "Adding..." : "Add"}
+                      </button>
+                    </div>
+                  ))}
+                  {availableGroupPlayers.length === 0 && (
+                    <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>All squad players are already in this session.</p>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ paddingTop: "1rem" }}>
+                <h4 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900, marginBottom: "0.25rem" }}>Add a guest</h4>
+                <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginBottom: "0.625rem" }}>
+                  For this session only. Session results are kept here, not in lifetime rankings.
+                </p>
+                <form onSubmit={handleAddSessionGuest} className="pb-guest-add-form">
+                  <input
+                    className="pb-input"
+                    type="text"
+                    placeholder="Guest name"
+                    value={sessionGuestName}
+                    onChange={(e) => setSessionGuestName(e.target.value)}
+                    required
+                    style={{ height: 44, borderRadius: "var(--r-md)" }}
+                  />
+                  <select className="pb-input" value={sessionGuestSkill} onChange={(e) => setSessionGuestSkill(e.target.value)} style={{ height: 44, borderRadius: "var(--r-md)" }}>
+                    <option value="unknown">Skill: Unknown</option>
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                  <button type="submit" disabled={!sessionGuestName.trim() || isAddingSessionGuest} style={{ ...primaryActionStyle, height: 44, opacity: sessionGuestName.trim() && !isAddingSessionGuest ? 1 : 0.5 }}>
+                    {isAddingSessionGuest ? "Adding..." : "Add guest"}
+                  </button>
+                </form>
+              </div>
             </div>
-          )}
+          ) : matches.length === 0 ? (
+            <div style={{ background: "var(--surface)", border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem 1.25rem", textAlign: "center" }}>
+              <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "0.375rem" }}>No matches yet</h3>
+              <p style={{ color: "var(--text-2)" }}>Matches appear when the session starts.</p>
+            </div>
+          ) : null}
 
           {/* Bench strip: who is sitting out this moment */}
           {isLive && matches.length > 0 && (
@@ -913,8 +1202,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                     >
                       🚑 Injured / Step Out
                     </button>
-                    <button onClick={() => handlePlayerStatus(p.id, "waiting")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem" }}>Waiting</button>
-                    <button onClick={() => handlePlayerStatus(p.id, "left")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem" }}>Left</button>
                     <button onClick={() => handlePlayerStatus(p.id, "removed")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem", color: "var(--danger)" }}>Remove</button>
                   </div>
                 </div>
@@ -1083,6 +1370,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </div>
         </div>
       )}
+      {confirmationDialog}
     </div>
   );
 }

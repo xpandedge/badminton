@@ -1,42 +1,56 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  canAddGroupMember,
+  canAdvanceRound,
+  canCreateSession,
+  canDeleteGroup,
+  canDeleteSession,
+  canEnterScore,
+  canGenerateSchedule,
+  canLeaveGroup,
+  canManageAdmins,
+  canManageGroup,
+  canManageMembers,
+  canManageSessionPlayers,
+  canManageTeamOwners,
+  canRebalanceSession,
+  canRemoveGroupMember,
+  canTransferOwnership,
+  groupRoleLabel,
+  normalizeGroupRole,
   resolveGroupRole,
   type GroupMember,
-  canManageTeamOwners,
-  canManageSquad,
-  canManageGroup,
-  canDeleteSession,
-  canCreateSession,
-  canGenerateSchedule,
-  canRebalanceSession,
-  canEnterScore,
-  canManageSessionPlayers,
-  canAdvanceRound,
+  type GroupRole,
 } from "./roles.js";
 
 const members: GroupMember[] = [
   { userId: "u-owner", role: "owner" },
-  { userId: "u-org", role: "organiser" },
-  { userId: "u-mem", role: "member" },
+  { userId: "u-admin", role: "admin" },
+  { userId: "u-legacy", role: "organiser" },
+  { userId: "u-member", role: "member" },
 ];
 
-describe("resolveGroupRole", () => {
-  it("returns the role for a known member", () => {
-    expect(resolveGroupRole(members, "u-owner")).toBe("owner");
-    expect(resolveGroupRole(members, "u-org")).toBe("organiser");
-    expect(resolveGroupRole(members, "u-mem")).toBe("member");
-  });
+const roles: Array<GroupRole | null> = ["owner", "admin", "organiser", "member", null];
 
-  it("returns null for a non-member", () => {
+describe("group roles", () => {
+  it("resolves stored roles and returns null for non-members", () => {
+    expect(resolveGroupRole(members, "u-owner")).toBe("owner");
+    expect(resolveGroupRole(members, "u-admin")).toBe("admin");
+    expect(resolveGroupRole(members, "u-legacy")).toBe("organiser");
+    expect(resolveGroupRole(members, "u-member")).toBe("member");
     expect(resolveGroupRole(members, "stranger")).toBeNull();
   });
 
-  it("returns null for an empty member list", () => {
-    expect(resolveGroupRole([], "u-owner")).toBeNull();
+  it("normalises legacy organiser records to admin for display", () => {
+    expect(normalizeGroupRole("organiser")).toBe("admin");
+    expect(normalizeGroupRole("admin")).toBe("admin");
+    expect(groupRoleLabel("organiser")).toBe("Admin");
+    expect(groupRoleLabel("owner")).toBe("Owner");
+    expect(groupRoleLabel(null)).toBeNull();
   });
 });
 
-describe("permission predicates (D8 simplified: owner | member)", () => {
+describe("permission matrix", () => {
   it("allows configured super admins to manage team owners", () => {
     expect(canManageTeamOwners("pankaj4bharat@gmail.com")).toBe(true);
     expect(canManageTeamOwners("sanju36@gmail.com")).toBe(true);
@@ -45,29 +59,70 @@ describe("permission predicates (D8 simplified: owner | member)", () => {
     expect(canManageTeamOwners(null)).toBe(false);
   });
 
-  it("owner-only capabilities", () => {
-    for (const fn of [canManageSquad, canManageGroup, canDeleteSession]) {
-      expect(fn("owner")).toBe(true);
-      expect(fn("organiser")).toBe(false);
-      expect(fn("member")).toBe(false);
-      expect(fn(null)).toBe(false);
+  it("keeps ownership capabilities owner-only", () => {
+    for (const fn of [canManageAdmins, canDeleteGroup, canTransferOwnership]) {
+      for (const role of roles) {
+        expect(fn(role), `${fn.name}(${role})`).toBe(role === "owner");
+      }
     }
   });
 
-  it("any member can create/generate/score/rebalance/advance (D8)", () => {
-    const anyMemberFns = [
+  it("allows owners, admins, and legacy organisers to administer groups and sessions", () => {
+    const adminFns = [
+      canManageGroup,
+      canManageMembers,
       canCreateSession,
       canGenerateSchedule,
       canRebalanceSession,
-      canEnterScore,
       canManageSessionPlayers,
       canAdvanceRound,
+      canDeleteSession,
     ];
-    for (const fn of anyMemberFns) {
-      expect(fn("owner")).toBe(true);
-      expect(fn("organiser")).toBe(true); // legacy Firestore value → treated as member
-      expect(fn("member")).toBe(true);
-      expect(fn(null)).toBe(false);
+
+    for (const fn of adminFns) {
+      for (const role of roles) {
+        expect(fn(role), `${fn.name}(${role})`).toBe(
+          role === "owner" || role === "admin" || role === "organiser",
+        );
+      }
     }
+  });
+
+  it("allows every group member to enter scores", () => {
+    expect(canEnterScore("owner")).toBe(true);
+    expect(canEnterScore("admin")).toBe(true);
+    expect(canEnterScore("organiser")).toBe(true);
+    expect(canEnterScore("member")).toBe(true);
+    expect(canEnterScore(null)).toBe(false);
+  });
+
+  it("lets admins add regular members but reserves admin assignment for the owner", () => {
+    expect(canAddGroupMember("owner", "admin")).toBe(true);
+    expect(canAddGroupMember("owner", "member")).toBe(true);
+    expect(canAddGroupMember("admin", "member")).toBe(true);
+    expect(canAddGroupMember("organiser", "member")).toBe(true);
+    expect(canAddGroupMember("admin", "admin")).toBe(false);
+    expect(canAddGroupMember("member", "member")).toBe(false);
+  });
+
+  it("prevents admins removing owners or other admins", () => {
+    expect(canRemoveGroupMember("owner", "admin")).toBe(true);
+    expect(canRemoveGroupMember("owner", "organiser")).toBe(true);
+    expect(canRemoveGroupMember("owner", "member")).toBe(true);
+    expect(canRemoveGroupMember("owner", "owner")).toBe(false);
+    expect(canRemoveGroupMember("admin", "member")).toBe(true);
+    expect(canRemoveGroupMember("organiser", "member")).toBe(true);
+    expect(canRemoveGroupMember("admin", "admin")).toBe(false);
+    expect(canRemoveGroupMember("admin", "organiser")).toBe(false);
+    expect(canRemoveGroupMember("admin", "owner")).toBe(false);
+    expect(canRemoveGroupMember("member", "member")).toBe(false);
+  });
+
+  it("lets non-owner members leave their own group", () => {
+    expect(canLeaveGroup("admin")).toBe(true);
+    expect(canLeaveGroup("organiser")).toBe(true);
+    expect(canLeaveGroup("member")).toBe(true);
+    expect(canLeaveGroup("owner")).toBe(false);
+    expect(canLeaveGroup(null)).toBe(false);
   });
 });

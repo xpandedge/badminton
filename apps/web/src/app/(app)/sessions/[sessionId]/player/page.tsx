@@ -5,12 +5,9 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { watchSession } from "@/lib/sessions/sessions";
 import { watchMatches } from "@/lib/sessions/live";
 import { findPlayerMatch, PlayerMatchInfo } from "@/lib/sessions/player-view";
+import { formatSessionStatus } from "@/lib/format/status";
 import type { Session } from "@/lib/sessions/types";
 import { LoadingState } from "@/components/LoadingState";
-
-function titleCase(value: string) {
-  return value.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
-}
 
 export default function PlayerSelfViewPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
@@ -68,7 +65,7 @@ export default function PlayerSelfViewPage({ params }: { params: Promise<{ sessi
             fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900,
             letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.75rem",
           }}>
-            {titleCase(session.status)}
+            {formatSessionStatus(session.status)}
           </span>
           <h1 style={{
             fontFamily: "var(--font-display)", fontSize: "clamp(1.5rem, 5vw, 2.25rem)",

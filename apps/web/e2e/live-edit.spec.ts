@@ -42,9 +42,9 @@ test.describe("live session editing", () => {
     const locked = page.locator(`[data-match-id="${matchId}"][data-locked="true"]`);
     await expect(locked).toBeVisible({ timeout: 20_000 });
 
-    // Rebalance future rounds; the scored round-1 match must survive, still locked
-    // and still showing its 4 players (rebalance only regenerates future rounds).
-    await page.getByTestId("rebalance-btn").click();
+    // The organiser flow no longer exposes a manual shuffle button. Roster and
+    // court changes rebalance in the background without disturbing visible cards.
+    await expect(page.getByTestId("rebalance-btn")).toHaveCount(0);
     const lockedAfter = page.locator(`[data-match-id="${matchId}"][data-locked="true"]`);
     await expect(lockedAfter).toBeVisible({ timeout: 20_000 });
     await expect(lockedAfter.getByTestId("match-player")).toHaveCount(4);

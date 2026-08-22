@@ -198,10 +198,13 @@ scripts/backfill-global-stats.ts             <- one-shot idempotent stats backfi
   to an `__session` cookie; server reads it. Token refreshed on `onIdTokenChanged`; cleared on sign-out.
 - Sensitive mutations call `verifyIdToken(token, /*checkRevoked*/ true)`.
 
-### Role model (decided: simplified)
-- D5's three-role model (`owner | organiser | member`) is collapsed to **two roles: `owner | member`**.
-- Permission predicates: `canManageSquad` = owner only; `canEnterScore` / `canGenerateSchedule` /
-  `canRebalance` = any member (owner OR member). This enables "anyone in the squad can score" (feature 3).
+### Role model (revised 2026-08-09)
+- Group permissions use **three user-facing roles: `owner | admin | member`**. Stored `organiser`
+  records are treated as legacy `admin` records until they are updated.
+- Owners appoint or remove admins. Owners and admins manage the group and run sessions. Members
+  can view, RSVP, and enter scores but cannot create, generate, rebalance, or control sessions.
+- A group has one owner and may have multiple admins. Roles remain per-group, so one account may
+  administer multiple groups.
 - `participantType` axis (Axis B of D5) is unchanged.
 
 ---

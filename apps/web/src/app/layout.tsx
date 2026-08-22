@@ -4,10 +4,24 @@ import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { DevUserSwitcher } from "@/components/DevUserSwitcher";
 
 export const metadata: Metadata = {
-  title: "Duorally — Social Session Chaos Killer",
-  description: "Run fair, low-admin social badminton & pickleball sessions.",
+  title: "DuoRally - Run Social Racquet Sessions",
+  description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "Duorally" },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/icon-192.png",
+  },
+  openGraph: {
+    title: "DuoRally - Run Social Racquet Sessions",
+    description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "DuoRally - Run Social Racquet Sessions",
+    description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+  },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "DuoRally" },
 };
 
 export const viewport: Viewport = {

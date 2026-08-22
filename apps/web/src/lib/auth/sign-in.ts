@@ -3,10 +3,13 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  updateProfile,
+  sendPasswordResetEmail,
   signOut,
   type UserCredential,
 } from "firebase/auth";
 import { getFirebaseServices } from "@/lib/firebase/client";
+import { normalizePlayerDisplayName } from "@/lib/auth/display-name";
 
 export async function signInWithGoogle(): Promise<UserCredential> {
   const { auth } = getFirebaseServices();
@@ -24,9 +27,18 @@ export async function signInWithEmail(
 export async function registerWithEmail(
   email: string,
   password: string,
+  displayName: string,
 ): Promise<UserCredential> {
   const { auth } = getFirebaseServices();
-  return createUserWithEmailAndPassword(auth, email, password);
+  const chosenName = normalizePlayerDisplayName(displayName);
+  const credential = await createUserWithEmailAndPassword(auth, email, password);
+  await updateProfile(credential.user, { displayName: chosenName });
+  return credential;
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  const { auth } = getFirebaseServices();
+  await sendPasswordResetEmail(auth, email);
 }
 
 export async function signOutUser(): Promise<void> {

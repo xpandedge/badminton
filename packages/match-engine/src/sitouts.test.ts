@@ -29,4 +29,34 @@ describe("selectSitOuts", () => {
     // That spreads out sit-outs!
     expect(sitting).toEqual(["a"]); // a comes first alphabetically among those with 0 sit-outs.
   });
+
+  it("uses two-game rhythm as a tie-breaker when fairness is equal", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    const s = createInitialState(ids.map((id) => ({ playerId: id, displayName: id, skillLevel: "unknown", availableFromRound: 1 })));
+    for (const id of ids) {
+      s.sitOuts.set(id, 0);
+      s.gamesPlayed.set(id, 2);
+      s.playStreak.set(id, id === "b" ? 2 : 1);
+    }
+    const order = new Map(ids.map((id, index) => [id, index]));
+
+    const { sitting } = selectSitOuts(s, ids, 1, order, 3);
+
+    expect(sitting).toEqual(["b"]);
+  });
+
+  it("does not rest a lagging player just because they have a rhythm streak", () => {
+    const ids = ["a", "b", "c", "d", "e"];
+    const s = createInitialState(ids.map((id) => ({ playerId: id, displayName: id, skillLevel: "unknown", availableFromRound: 1 })));
+    for (const id of ids) {
+      s.sitOuts.set(id, 0);
+      s.gamesPlayed.set(id, id === "a" ? 1 : 2);
+      s.playStreak.set(id, id === "a" ? 2 : 0);
+    }
+    const order = new Map(ids.map((id, index) => [id, index]));
+
+    const { sitting } = selectSitOuts(s, ids, 1, order, 3);
+
+    expect(sitting).not.toEqual(["a"]);
+  });
 });

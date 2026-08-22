@@ -1,12 +1,61 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { canManageSquad, generateJoinCode } from "@picklebaddies/domain";
+import {
+  canAddGroupMember,
+  canLeaveGroup,
+  canManageAdmins,
+  canManageGroup,
+  canManageMembers,
+  canRemoveGroupMember,
+  canTransferOwnership,
+  generateJoinCode,
+  type GroupRole,
+  type SquadPlayerKind,
+} from "@picklebaddies/domain";
 import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 
-type AddableMemberRole = "member" | "organiser";
+type AddableMemberRole = "member" | "admin";
+
+export interface SquadRsvpDefaultsInput {
+  totalPlayers: number;
+  casualConfirmedSlots: number;
+  waitlistEnabled: boolean;
+  cutoffHoursBeforeStart?: number | null;
+}
+
+function normalizeSquadRsvpDefaults(input: SquadRsvpDefaultsInput): SquadRsvpDefaultsInput {
+  const totalPlayers = Math.trunc(Number(input.totalPlayers));
+  const casualConfirmedSlots = Math.trunc(Number(input.casualConfirmedSlots));
+  const cutoffHoursBeforeStart =
+    input.cutoffHoursBeforeStart === null || input.cutoffHoursBeforeStart === undefined || input.cutoffHoursBeforeStart === 0
+      ? null
+      : Math.trunc(Number(input.cutoffHoursBeforeStart));
+
+  if (!Number.isFinite(totalPlayers) || totalPlayers < 4) {
+    throw Object.assign(new Error("Total player capacity must be at least 4"), { code: "INVALID_ARGUMENT" });
+  }
+  if (!Number.isFinite(casualConfirmedSlots) || casualConfirmedSlots < 0) {
+    throw Object.assign(new Error("Casual confirmed slots cannot be negative"), { code: "INVALID_ARGUMENT" });
+  }
+  if (casualConfirmedSlots > totalPlayers) {
+    throw Object.assign(new Error("Casual confirmed slots cannot exceed total capacity"), {
+      code: "INVALID_ARGUMENT",
+    });
+  }
+  if (cutoffHoursBeforeStart !== null && (!Number.isFinite(cutoffHoursBeforeStart) || cutoffHoursBeforeStart < 0)) {
+    throw Object.assign(new Error("RSVP cutoff cannot be negative"), { code: "INVALID_ARGUMENT" });
+  }
+
+  return {
+    totalPlayers,
+    casualConfirmedSlots,
+    waitlistEnabled: Boolean(input.waitlistEnabled),
+    cutoffHoursBeforeStart,
+  };
+}
 
 // ── shared creation helper ──────────────────────────────────────────────────
 
@@ -23,7 +72,6 @@ async function createSquadForUser(
   const ownerRecord = await auth.getUser(uid).catch(() => null);
   const ownerDisplayName =
     ownerRecord?.displayName?.trim() ||
-    ownerRecord?.email?.split("@")[0] ||
     "Owner";
 
   await db.runTransaction(async (t) => {
@@ -34,6 +82,12 @@ async function createSquadForUser(
       createdBy: uid,
       memberIds: [uid],
       inviteCode: generateJoinCode(),
+      rsvpDefaults: {
+        totalPlayers: 11,
+        casualConfirmedSlots: 3,
+        waitlistEnabled: true,
+        cutoffHoursBeforeStart: null,
+      },
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -51,6 +105,7 @@ async function createSquadForUser(
       email: ownerRecord?.email ?? null,
       skillLevel: "unknown",
       isGuest: false,
+      playerKind: "regular",
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -104,7 +159,6 @@ export async function getOrCreateDefaultSquad(): Promise<ActionResult<{ squadId:
   const ownerRecord = await auth.getUser(session.uid).catch(() => null);
   const ownerDisplayName =
     ownerRecord?.displayName?.trim() ||
-    ownerRecord?.email?.split("@")[0] ||
     "My";
 
   const result = await createSquadForUser(session.uid, `${ownerDisplayName}'s Squad`, null);
@@ -125,11 +179,15 @@ export async function addMemberToSquad(
   const db = getAdminDb();
   const auth = getAdminAuth();
 
-  // Only owners may add members
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
-  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
-  if (!canManageSquad(callerRole)) {
-    return err("FORBIDDEN", "Only squad owners can add members");
+  const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
+  if (!canAddGroupMember(callerRole, role)) {
+    return err(
+      "FORBIDDEN",
+      role === "admin"
+        ? "Only the group owner can appoint admins"
+        : "Only group owners and admins can add members",
+    );
   }
 
   // Look up target user by email
@@ -149,7 +207,6 @@ export async function addMemberToSquad(
 
   const displayName =
     targetUser.displayName?.trim() ||
-    targetUser.email?.split("@")[0] ||
     "Player";
 
   const playerRef = db.doc(`groups/${squadId}/players/${targetUser.uid}`);
@@ -177,6 +234,7 @@ export async function addMemberToSquad(
         email: targetUser.email ?? null,
         skillLevel: "unknown",
         isGuest: false,
+        playerKind: "regular",
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
@@ -211,9 +269,9 @@ export async function addGuestPlayerToSquad(
   const db = getAdminDb();
 
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
-  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
-  if (!canManageSquad(callerRole)) {
-    return err("FORBIDDEN", "Only squad owners can add guest players");
+  const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
+  if (!canManageMembers(callerRole)) {
+    return err("FORBIDDEN", "Only group owners and admins can add guest players");
   }
 
   // Generate a stable guest ID that won't collide with real user UIDs
@@ -227,11 +285,74 @@ export async function addGuestPlayerToSquad(
     email: null,
     skillLevel,
     isGuest: true,
+    playerKind: "casual",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
 
   return ok({ playerId });
+}
+
+// ── venue and court management ──────────────────────────────────────────────
+
+export async function addVenueToSquad(
+  squadId: string,
+  name: string,
+): Promise<ActionResult<{ venueId: string }>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!name.trim()) return err("INVALID_ARGUMENT", "Venue name is required");
+
+  const db = getAdminDb();
+  const callerRole = await getMemberRole(db, squadId, session.uid);
+  if (!canManageGroup(callerRole)) {
+    return err("FORBIDDEN", "Only group owners and admins can add venues");
+  }
+
+  const venueRef = db.collection(`groups/${squadId}/venues`).doc();
+  await venueRef.set({
+    name: name.trim(),
+    address: null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  });
+  return ok({ venueId: venueRef.id });
+}
+
+export async function addCourtToSquadVenue(
+  squadId: string,
+  venueId: string,
+  name: string,
+  courtNumber: number,
+): Promise<ActionResult<{ courtId: string }>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!name.trim()) return err("INVALID_ARGUMENT", "Court name is required");
+  if (!Number.isInteger(courtNumber) || courtNumber < 1) {
+    return err("INVALID_ARGUMENT", "Court number must be at least 1");
+  }
+
+  const db = getAdminDb();
+  const [callerRole, venueSnap] = await Promise.all([
+    getMemberRole(db, squadId, session.uid),
+    db.doc(`groups/${squadId}/venues/${venueId}`).get(),
+  ]);
+  if (!canManageGroup(callerRole)) {
+    return err("FORBIDDEN", "Only group owners and admins can add courts");
+  }
+  if (!venueSnap.exists) return err("NOT_FOUND", "Venue not found");
+
+  const courtRef = db.collection(`groups/${squadId}/venues/${venueId}/courts`).doc();
+  await courtRef.set({
+    name: name.trim(),
+    courtNumber,
+    isActive: true,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  });
+  return ok({ courtId: courtRef.id });
 }
 
 // ── Self-join: shared helper ────────────────────────────────────────────────
@@ -242,8 +363,9 @@ async function addUserToSquad(
   db: FirebaseFirestore.Firestore,
   squadId: string,
   user: { uid: string; displayName?: string | null; email?: string | null },
+  playerKind: SquadPlayerKind = "regular",
 ): Promise<void> {
-  const displayName = user.displayName?.trim() || user.email?.split("@")[0] || "Player";
+  const displayName = user.displayName?.trim() || "Player";
   t.set(db.doc(`groups/${squadId}/members/${user.uid}`), {
     userId: user.uid, email: user.email ?? null, displayName, role: "member",
     createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
@@ -251,6 +373,7 @@ async function addUserToSquad(
   t.set(db.doc(`groups/${squadId}/players/${user.uid}`), {
     userId: user.uid, displayName, email: user.email ?? null,
     skillLevel: "unknown", isGuest: false,
+    playerKind,
     createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
   }, { merge: true });
   t.update(db.doc(`groups/${squadId}`), {
@@ -353,7 +476,7 @@ export async function requestToJoinSquad(squadId: string): Promise<ActionResult<
   if (memberSnap.exists) return ok({ status: "joined" }); // already in
 
   const record = await auth.getUser(session.uid).catch(() => null);
-  const displayName = record?.displayName?.trim() || record?.email?.split("@")[0] || "Player";
+  const displayName = record?.displayName?.trim() || "Player";
 
   await db.doc(`groups/${squadId}/joinRequests/${session.uid}`).set({
     userId: session.uid,
@@ -366,20 +489,31 @@ export async function requestToJoinSquad(squadId: string): Promise<ActionResult<
   return ok({ status: "requested" });
 }
 
-// ── approve / reject join requests (any member) ─────────────────────────────
+// ── approve / reject join requests ──────────────────────────────────────────
 
-async function requireMember(db: FirebaseFirestore.Firestore, squadId: string, uid: string): Promise<boolean> {
+async function getMemberRole(
+  db: FirebaseFirestore.Firestore,
+  squadId: string,
+  uid: string,
+): Promise<GroupRole | null> {
   const snap = await db.doc(`groups/${squadId}/members/${uid}`).get();
-  return snap.exists;
+  return snap.exists ? (snap.data() as { role?: GroupRole }).role ?? null : null;
 }
 
-export async function approveJoinRequest(squadId: string, requesterId: string): Promise<ActionResult<void>> {
+export async function approveJoinRequest(
+  squadId: string,
+  requesterId: string,
+  playerKind: SquadPlayerKind = "regular",
+): Promise<ActionResult<void>> {
   const session = await requireSession().catch(() => null);
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (playerKind !== "regular" && playerKind !== "casual") {
+    return err("INVALID_ARGUMENT", "Choose regular or casual");
+  }
 
   const db = getAdminDb();
-  if (!(await requireMember(db, squadId, session.uid))) {
-    return err("FORBIDDEN", "Only squad members can approve requests");
+  if (!canManageMembers(await getMemberRole(db, squadId, session.uid))) {
+    return err("FORBIDDEN", "Only group owners and admins can approve requests");
   }
 
   const reqRef = db.doc(`groups/${squadId}/joinRequests/${requesterId}`);
@@ -388,7 +522,7 @@ export async function approveJoinRequest(squadId: string, requesterId: string): 
   const reqData = reqSnap.data() as any;
 
   await db.runTransaction(async (t) => {
-    await addUserToSquad(t, db, squadId, { uid: requesterId, displayName: reqData.displayName, email: reqData.email });
+    await addUserToSquad(t, db, squadId, { uid: requesterId, displayName: reqData.displayName, email: reqData.email }, playerKind);
     t.delete(reqRef);
   });
 
@@ -400,15 +534,15 @@ export async function rejectJoinRequest(squadId: string, requesterId: string): P
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
-  if (!(await requireMember(db, squadId, session.uid))) {
-    return err("FORBIDDEN", "Only squad members can manage requests");
+  if (!canManageMembers(await getMemberRole(db, squadId, session.uid))) {
+    return err("FORBIDDEN", "Only group owners and admins can manage requests");
   }
 
   await db.doc(`groups/${squadId}/joinRequests/${requesterId}`).delete();
   return ok(undefined);
 }
 
-// ── rotateInviteCode (owner) ────────────────────────────────────────────────
+// ── rotateInviteCode ────────────────────────────────────────────────────────
 
 export async function rotateInviteCode(squadId: string): Promise<ActionResult<{ inviteCode: string }>> {
   const session = await requireSession().catch(() => null);
@@ -416,9 +550,9 @@ export async function rotateInviteCode(squadId: string): Promise<ActionResult<{ 
 
   const db = getAdminDb();
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
-  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
-  if (!canManageSquad(callerRole)) {
-    return err("FORBIDDEN", "Only squad owners can change the invite code");
+  const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
+  if (!canManageGroup(callerRole)) {
+    return err("FORBIDDEN", "Only group owners and admins can change the invite code");
   }
 
   const inviteCode = generateJoinCode();
@@ -426,7 +560,337 @@ export async function rotateInviteCode(squadId: string): Promise<ActionResult<{ 
   return ok({ inviteCode });
 }
 
-// ── removePlayerFromSquad (owner / organiser) ───────────────────────────────
+// ── RSVP defaults and player type ───────────────────────────────────────────
+
+export async function updateSquadPlayerKind(
+  squadId: string,
+  playerId: string,
+  kind: SquadPlayerKind,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (kind !== "regular" && kind !== "casual") {
+    return err("INVALID_ARGUMENT", "Choose Regular or Casual");
+  }
+
+  const db = getAdminDb();
+  const callerRole = await getMemberRole(db, squadId, session.uid);
+  if (!canManageMembers(callerRole)) {
+    return err("FORBIDDEN", "Only squad owners and admins can change player type");
+  }
+
+  const playerRef = db.doc(`groups/${squadId}/players/${playerId}`);
+  const playerSnap = await playerRef.get();
+  if (!playerSnap.exists) return err("NOT_FOUND", "Player not found");
+
+  await playerRef.set({
+    playerKind: kind,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  }, { merge: true });
+  return ok(undefined);
+}
+
+export async function updateSquadRsvpDefaults(
+  squadId: string,
+  input: SquadRsvpDefaultsInput,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+  const callerRole = await getMemberRole(db, squadId, session.uid);
+  if (!canManageGroup(callerRole)) {
+    return err("FORBIDDEN", "Only squad owners and admins can change RSVP defaults");
+  }
+
+  let defaults: SquadRsvpDefaultsInput;
+  try {
+    defaults = normalizeSquadRsvpDefaults(input);
+  } catch (error: any) {
+    if (error.code === "INVALID_ARGUMENT") return err("INVALID_ARGUMENT", error.message);
+    throw error;
+  }
+
+  await db.doc(`groups/${squadId}`).set({
+    rsvpDefaults: defaults,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  }, { merge: true });
+
+  return ok(undefined);
+}
+
+// ── updateMemberRole ────────────────────────────────────────────────────────
+
+export async function updateMemberRole(
+  squadId: string,
+  targetUserId: string,
+  role: "admin" | "member",
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+
+  const db = getAdminDb();
+
+  try {
+    await db.runTransaction(async (t) => {
+      const callerRef = db.doc(`groups/${squadId}/members/${session.uid}`);
+      const targetRef = db.doc(`groups/${squadId}/members/${targetUserId}`);
+      const [callerSnap, targetSnap] = await Promise.all([t.get(callerRef), t.get(targetRef)]);
+
+      const callerRole = callerSnap.exists
+        ? (callerSnap.data() as { role?: GroupRole }).role ?? null
+        : null;
+      const targetRole = targetSnap.exists
+        ? (targetSnap.data() as { role?: GroupRole }).role ?? null
+        : null;
+
+      if (!canManageAdmins(callerRole)) {
+        throw Object.assign(new Error("Only the group owner can change admin roles"), { code: "FORBIDDEN" });
+      }
+      if (!targetSnap.exists) {
+        throw Object.assign(new Error("Member not found"), { code: "NOT_FOUND" });
+      }
+      if (targetRole === "owner") {
+        throw Object.assign(new Error("The owner role cannot be changed here"), { code: "FORBIDDEN" });
+      }
+
+      t.update(targetRef, {
+        role,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: session.uid,
+      });
+    });
+  } catch (error: any) {
+    if (error.code === "FORBIDDEN") return err("FORBIDDEN", error.message);
+    if (error.code === "NOT_FOUND") return err("NOT_FOUND", error.message);
+    throw error;
+  }
+
+  return ok(undefined);
+}
+
+// ── transferSquadOwnership ─────────────────────────────────────────────────
+
+export async function transferSquadOwnership(
+  squadId: string,
+  targetUserId: string,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!squadId || !targetUserId) {
+    return err("INVALID_ARGUMENT", "Squad and new owner are required");
+  }
+  if (targetUserId === session.uid) {
+    return err("INVALID_ARGUMENT", "Choose another squad member as the new owner");
+  }
+
+  const db = getAdminDb();
+  try {
+    await db.runTransaction(async (t) => {
+      const groupRef = db.doc(`groups/${squadId}`);
+      const callerRef = db.doc(`groups/${squadId}/members/${session.uid}`);
+      const targetRef = db.doc(`groups/${squadId}/members/${targetUserId}`);
+      const [groupSnap, callerSnap, targetSnap] = await Promise.all([
+        t.get(groupRef),
+        t.get(callerRef),
+        t.get(targetRef),
+      ]);
+
+      if (!groupSnap.exists) {
+        throw Object.assign(new Error("Squad not found"), { code: "NOT_FOUND" });
+      }
+      const callerRole = callerSnap.exists
+        ? (callerSnap.data() as { role?: GroupRole }).role ?? null
+        : null;
+      if (!canTransferOwnership(callerRole)) {
+        throw Object.assign(
+          new Error("Only the current squad owner can transfer ownership"),
+          { code: "FORBIDDEN" },
+        );
+      }
+      if (!targetSnap.exists) {
+        throw Object.assign(
+          new Error("Choose a registered squad member as the new owner"),
+          { code: "NOT_FOUND" },
+        );
+      }
+      const targetRole = (targetSnap.data() as { role?: GroupRole }).role ?? null;
+      if (targetRole === "owner") {
+        throw Object.assign(new Error("This member already owns the squad"), {
+          code: "FAILED_PRECONDITION",
+        });
+      }
+
+      t.update(targetRef, {
+        role: "owner",
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: session.uid,
+      });
+      t.update(callerRef, {
+        role: "admin",
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: session.uid,
+      });
+      t.update(groupRef, {
+        createdBy: targetUserId,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: session.uid,
+      });
+      t.set(db.collection(`groups/${squadId}/auditLogs`).doc(), {
+        actorUid: session.uid,
+        action: "ownership/transferred",
+        details: { previousOwnerId: session.uid, newOwnerId: targetUserId },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (error: any) {
+    if (error.code === "FORBIDDEN") return err("FORBIDDEN", error.message);
+    if (error.code === "NOT_FOUND") return err("NOT_FOUND", error.message);
+    if (error.code === "FAILED_PRECONDITION") {
+      return err("FAILED_PRECONDITION", error.message);
+    }
+    throw error;
+  }
+
+  return ok(undefined);
+}
+
+// ── leaveSquad ─────────────────────────────────────────────────────────────
+
+export async function leaveSquad(squadId: string): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!squadId) return err("INVALID_ARGUMENT", "Squad is required");
+
+  const db = getAdminDb();
+  try {
+    await db.runTransaction(async (t) => {
+      const groupRef = db.doc(`groups/${squadId}`);
+      const memberRef = db.doc(`groups/${squadId}/members/${session.uid}`);
+      const squadPlayerRef = db.doc(`groups/${squadId}/players/${session.uid}`);
+      const sessionsQuery = db.collection("sessions").where("groupId", "==", squadId);
+      const [groupSnap, memberSnap, squadPlayerSnap, sessionsSnap] = await Promise.all([
+        t.get(groupRef),
+        t.get(memberRef),
+        t.get(squadPlayerRef),
+        t.get(sessionsQuery),
+      ]);
+
+      if (!groupSnap.exists) {
+        throw Object.assign(new Error("Squad not found"), { code: "NOT_FOUND" });
+      }
+      if (!memberSnap.exists) {
+        throw Object.assign(new Error("You are no longer a member of this squad"), {
+          code: "NOT_FOUND",
+        });
+      }
+      const callerRole = (memberSnap.data() as { role?: GroupRole }).role ?? null;
+      if (!canLeaveGroup(callerRole)) {
+        throw Object.assign(
+          new Error("Transfer ownership to another member before leaving this squad"),
+          { code: "FAILED_PRECONDITION" },
+        );
+      }
+
+      const unstartedSessions = sessionsSnap.docs.filter((sessionDoc) => {
+        const status = sessionDoc.data().status;
+        return status === "draft" || status === "scheduled";
+      });
+      const cleanup = await Promise.all(unstartedSessions.map(async (sessionDoc) => {
+        const playerRef = db.doc(`sessions/${sessionDoc.id}/players/${session.uid}`);
+        const leaderboardRef = db.doc(`sessions/${sessionDoc.id}/leaderboard/${session.uid}`);
+        const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${session.uid}`);
+        const engineRef = db.doc(`sessions/${sessionDoc.id}/engine/state`);
+        const [playerSnap, leaderboardSnap, rsvpSnap, matchesSnap, sitOutsSnap, engineSnap] =
+          await Promise.all([
+            t.get(playerRef),
+            t.get(leaderboardRef),
+            t.get(rsvpRef),
+            t.get(db.collection(`sessions/${sessionDoc.id}/matches`)),
+            t.get(db.collection(`sessions/${sessionDoc.id}/sitOuts`)),
+            t.get(engineRef),
+          ]);
+        return {
+          sessionDoc,
+          playerRef,
+          leaderboardRef,
+          rsvpRef,
+          engineRef,
+          playerSnap,
+          leaderboardSnap,
+          rsvpSnap,
+          matchesSnap,
+          sitOutsSnap,
+          engineSnap,
+        };
+      }));
+
+      for (const item of cleanup) {
+        if (item.playerSnap.exists) t.delete(item.playerRef);
+        if (item.leaderboardSnap.exists) t.delete(item.leaderboardRef);
+        if (item.rsvpSnap.exists) t.delete(item.rsvpRef);
+
+        const sessionData = item.sessionDoc.data();
+        const rsvpStatus = item.rsvpSnap.exists ? item.rsvpSnap.data()?.status : null;
+        const sessionUpdate: Record<string, unknown> = {
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+        if (rsvpStatus === "going") {
+          sessionUpdate.rsvpGoingCount = Math.max(
+            0,
+            Number(sessionData.rsvpGoingCount ?? 0) - 1,
+          );
+        } else if (rsvpStatus === "not_going") {
+          sessionUpdate.rsvpNotGoingCount = Math.max(
+            0,
+            Number(sessionData.rsvpNotGoingCount ?? 0) - 1,
+          );
+        }
+
+        const hasGeneratedSchedule = Boolean(sessionData.scheduleGeneratedAt)
+          || !item.matchesSnap.empty
+          || !item.sitOutsSnap.empty
+          || item.engineSnap.exists;
+        if (hasGeneratedSchedule) {
+          for (const matchDoc of item.matchesSnap.docs) t.delete(matchDoc.ref);
+          for (const sitOutDoc of item.sitOutsSnap.docs) t.delete(sitOutDoc.ref);
+          if (item.engineSnap.exists) t.delete(item.engineRef);
+          Object.assign(sessionUpdate, {
+            scheduleGeneratedAt: null,
+            nextCycleNumber: 1,
+            currentRoundNumber: 0,
+          });
+        }
+        t.update(item.sessionDoc.ref, sessionUpdate);
+      }
+
+      t.delete(memberRef);
+      if (squadPlayerSnap.exists) t.delete(squadPlayerRef);
+      t.update(groupRef, {
+        memberIds: FieldValue.arrayRemove(session.uid),
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: session.uid,
+      });
+      t.set(db.collection(`groups/${squadId}/auditLogs`).doc(), {
+        actorUid: session.uid,
+        action: "member/left",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (error: any) {
+    if (error.code === "NOT_FOUND") return err("NOT_FOUND", error.message);
+    if (error.code === "FAILED_PRECONDITION") {
+      return err("FAILED_PRECONDITION", error.message);
+    }
+    throw error;
+  }
+
+  return ok(undefined);
+}
+
+// ── removePlayerFromSquad ───────────────────────────────────────────────────
 
 export async function removePlayerFromSquad(
   squadId: string,
@@ -436,20 +900,47 @@ export async function removePlayerFromSquad(
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
-  const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
-  const callerRole = callerSnap.exists ? (callerSnap.data() as any).role : null;
-  if (!canManageSquad(callerRole)) {
-    return err("FORBIDDEN", "Only squad owners can remove players");
-  }
+  try {
+    await db.runTransaction(async (t) => {
+      const callerRef = db.doc(`groups/${squadId}/members/${session.uid}`);
+      const targetMemberRef = db.doc(`groups/${squadId}/members/${targetPlayerId}`);
+      const targetPlayerRef = db.doc(`groups/${squadId}/players/${targetPlayerId}`);
+      const [callerSnap, targetMemberSnap, targetPlayerSnap] = await Promise.all([
+        t.get(callerRef),
+        t.get(targetMemberRef),
+        t.get(targetPlayerRef),
+      ]);
 
-  await db.runTransaction(async (t) => {
-    t.delete(db.doc(`groups/${squadId}/members/${targetPlayerId}`));
-    t.delete(db.doc(`groups/${squadId}/players/${targetPlayerId}`));
-    t.update(db.doc(`groups/${squadId}`), {
-      memberIds: FieldValue.arrayRemove(targetPlayerId),
-      updatedAt: FieldValue.serverTimestamp(),
+      const callerRole = callerSnap.exists
+        ? (callerSnap.data() as { role?: GroupRole }).role ?? null
+        : null;
+      const targetRole = targetMemberSnap.exists
+        ? (targetMemberSnap.data() as { role?: GroupRole }).role ?? null
+        : null;
+      const targetIsGuest = !targetMemberSnap.exists && targetPlayerSnap.exists
+        && (targetPlayerSnap.data() as { isGuest?: boolean }).isGuest === true;
+
+      const canRemove = targetIsGuest
+        ? canManageMembers(callerRole)
+        : canRemoveGroupMember(callerRole, targetRole);
+      if (!canRemove) {
+        throw Object.assign(
+          new Error("You do not have permission to remove this group member"),
+          { code: "FORBIDDEN" },
+        );
+      }
+
+      t.delete(targetMemberRef);
+      t.delete(targetPlayerRef);
+      t.update(db.doc(`groups/${squadId}`), {
+        memberIds: FieldValue.arrayRemove(targetPlayerId),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
     });
-  });
+  } catch (error: any) {
+    if (error.code === "FORBIDDEN") return err("FORBIDDEN", error.message);
+    throw error;
+  }
 
   return ok(undefined);
 }

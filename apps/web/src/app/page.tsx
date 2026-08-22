@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
+import { LegalLinks } from "@/components/LegalLinks";
 
 export default function Home() {
   return (
@@ -74,7 +75,7 @@ export default function Home() {
               marginBottom: "1.5rem",
             }}
           >
-            Schedule sessions, auto-balance teams, track live scores — and stop managing it all in WhatsApp.
+            Plan sessions, manage players, run courts, and track scores for social pickleball and badminton groups.
           </p>
 
           {/* Sport tags */}
@@ -141,8 +142,9 @@ export default function Home() {
             animation: "pb-fade 600ms 200ms var(--ease-out) both",
           }}
         >
-          Fair games · live scores · zero WhatsApp maths
+          Plan games · run courts · track scores
         </p>
+        <LegalLinks compact />
       </div>
     </div>
   );

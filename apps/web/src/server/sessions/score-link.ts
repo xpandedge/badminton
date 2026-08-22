@@ -6,6 +6,7 @@ import { headers } from "next/headers";
 import { getAdminDb } from "@/server/firebase/admin";
 import { ok, err, type ActionResult } from "@/server/result";
 import { validatePayload, readAutoFillInputs, writeAutoFill } from "./scheduling";
+import { applySquadRatingForMatch } from "./squad-rating";
 
 // Public, unauthenticated: courtside scoring via a shareable link. Ported from
 // the (undeployed) functions/src/scoreLink.ts Cloud Function — same rate-limit
@@ -170,6 +171,16 @@ export async function submitScoreByLink(
         Promise.all(playerRefs.map((r) => t.get(r))),
         Promise.all(lbRefs.map((r) => t.get(r))),
       ]);
+
+      if (teamAIds.length === 2 && teamBIds.length === 2) {
+        await applySquadRatingForMatch(t, db, {
+          groupId: String(session.groupId),
+          teamAIds: [teamAIds[0]!, teamAIds[1]!],
+          teamBIds: [teamBIds[0]!, teamBIds[1]!],
+          winnerTeam,
+          payload,
+        });
+      }
 
       // ── THEN ALL WRITES ──
       const updateStats = (data: any, playerId: string) => {

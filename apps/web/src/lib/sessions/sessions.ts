@@ -55,6 +55,14 @@ export async function createSession(input: CreateSessionInput): Promise<string> 
     joinEnabled: true,
     scoreCode: generateJoinCode(),
     scoreLinkEnabled: true,
+    rsvpCode: generateJoinCode(),
+    rsvpEnabled: true,
+    rsvpCapacity: {
+      totalPlayers: 11,
+      casualConfirmedSlots: 3,
+      waitlistEnabled: true,
+      cutoffAt: null,
+    },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });

@@ -47,4 +47,52 @@ describe("buildRound", () => {
                       matchWithP0.teamB.includes("p0") && matchWithP0.teamB.includes("p1");
     expect(isPartner).toBe(false);
   });
+
+  it("keeps overplayed substitutes out when four lower-load players are available", () => {
+    const sixPlayers: EnginePlayer[] = Array.from({ length: 6 }, (_, i) => ({
+      playerId: `p${i}`, displayName: `p${i}`, skillLevel: "unknown", availableFromRound: 1,
+    }));
+    const state = createInitialState(sixPlayers);
+
+    // Make the four least-played players an unattractive relationship group.
+    // Game-load fairness must still win before partner/opponent optimisation.
+    recordMatch(state, 1, ["p0", "p1"], ["p2", "p3"]);
+    for (const id of ["p0", "p1", "p2", "p3"]) state.gamesPlayed.set(id, 0);
+    state.gamesPlayed.set("p4", 2);
+    state.gamesPlayed.set("p5", 2);
+
+    const result = buildRound(state, sixPlayers, [courts[0]!], 2);
+    const selected = new Set([...result.matches[0]!.teamA, ...result.matches[0]!.teamB]);
+
+    expect(selected).toEqual(new Set(["p0", "p1", "p2", "p3"]));
+  });
+
+  it("globally balances two courts instead of leaving one court with bad leftovers", () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const ps: EnginePlayer[] = ids.map((id) => ({
+      playerId: id,
+      displayName: id,
+      skillLevel: "unknown",
+      availableFromRound: 1,
+    }));
+    const state = createInitialState(ps);
+    const order = new Map(ids.map((id, index) => [id, index]));
+
+    recordMatch(state, 1, ["b", "f"], ["c", "d"]);
+    recordMatch(state, 2, ["c", "e"], ["a", "d"]);
+    recordMatch(state, 3, ["d", "f"], ["c", "h"]);
+    recordMatch(state, 4, ["a", "c"], ["d", "f"]);
+
+    for (const id of ids) {
+      state.gamesPlayed.set(id, 0);
+      state.playStreak.set(id, 0);
+    }
+
+    const result = buildRound(state, ps, courts, 5, order);
+    const groupKeys = result.matches
+      .map((m) => [...m.teamA, ...m.teamB].sort().join(""))
+      .sort();
+
+    expect(groupKeys).toEqual(["abch", "defg"]);
+  });
 });

@@ -1,12 +1,12 @@
 {
-  "name": "PickleBaddies — Social Session Chaos Killer",
-  "short_name": "PickleBaddies",
-  "description": "Run fair, low-admin social badminton & pickleball sessions.",
+  "name": "DuoRally - Run Social Racquet Sessions",
+  "short_name": "DuoRally",
+  "description": "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
+  "background_color": "#16241C",
+  "theme_color": "#16241C",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

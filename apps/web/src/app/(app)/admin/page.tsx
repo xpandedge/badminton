@@ -95,7 +95,7 @@ export default function AdminPage() {
           }}>
             Access locked
           </h1>
-          <p style={{ color: "var(--text-2)" }}>This workspace is only available to configured super admins.</p>
+          <p style={{ color: "var(--text-2)" }}>This area is only available to configured super admins.</p>
         </div>
       </div>
     );

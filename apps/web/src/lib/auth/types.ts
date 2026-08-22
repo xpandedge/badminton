@@ -5,3 +5,7 @@ export interface AuthState {
   /** true until the first onAuthStateChanged callback fires. */
   loading: boolean;
 }
+
+export interface AuthContextValue extends AuthState {
+  refreshUser: () => Promise<void>;
+}

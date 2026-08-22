@@ -1,17 +1,28 @@
 "use client";
 
-import { createContext, useEffect, useState } from "react";
+import { createContext, useCallback, useEffect, useState } from "react";
 import { onIdTokenChanged } from "firebase/auth";
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { ensureUserProfile } from "@/lib/auth/profile";
 import { setSessionCookie, clearSessionCookie } from "@/lib/auth/session-cookie";
 import { ensureGlobalPlayer } from "@/server/players/actions";
-import type { AuthState } from "@/lib/auth/types";
+import type { AuthContextValue, AuthState } from "@/lib/auth/types";
 
-export const AuthContext = createContext<AuthState>({ user: null, loading: true });
+export const AuthContext = createContext<AuthContextValue>({
+  user: null,
+  loading: true,
+  refreshUser: async () => undefined,
+});
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
+
+  const refreshUser = useCallback(async () => {
+    const { auth } = getFirebaseServices();
+    if (!auth.currentUser) return;
+    await auth.currentUser.reload();
+    setState({ user: auth.currentUser, loading: false });
+  }, []);
 
   useEffect(() => {
     const { auth, db } = getFirebaseServices();
@@ -45,5 +56,5 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub;
   }, []);
 
-  return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ ...state, refreshUser }}>{children}</AuthContext.Provider>;
 }

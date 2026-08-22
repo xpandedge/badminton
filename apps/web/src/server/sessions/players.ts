@@ -45,6 +45,8 @@ export async function addGroupMemberToSession(
         throw Object.assign(new Error("Player not found in this team"), { code: "NOT_FOUND" });
       }
       const groupPlayer = groupPlayerSnap.data()!;
+      const rsvpRef = db.doc(`sessions/${sessionId}/rsvps/${targetPlayerId}`);
+      const existingRsvp = await t.get(rsvpRef);
 
       const sessionPlayerRef = db.doc(`sessions/${sessionId}/players/${targetPlayerId}`);
       const existing = await t.get(sessionPlayerRef);
@@ -57,6 +59,8 @@ export async function addGroupMemberToSession(
 
       const displayName = ((groupPlayer.displayName as string | undefined) ?? "").trim() || "Player";
       const skillLevel = (groupPlayer.skillLevel as string | undefined) ?? "unknown";
+      const playerKind = groupPlayer.playerKind === "casual" ? "casual" : "regular";
+      const rsvpResponse = playerKind === "casual" ? "casual_joined" : "in";
 
       t.set(sessionPlayerRef, {
         playerId: targetPlayerId,
@@ -84,10 +88,35 @@ export async function addGroupMemberToSession(
         sitOutCount: 0,
       }, { merge: true });
 
+      const previousRsvp = existingRsvp.exists ? existingRsvp.data() : null;
+      const previousStatus = previousRsvp?.status;
+      t.set(rsvpRef, {
+        userId: groupPlayer.userId ?? targetPlayerId,
+        displayName,
+        status: "going",
+        response: rsvpResponse,
+        playerKind,
+        participantType: "registered_user",
+        adminOverride: "confirmed",
+        adminOverrideBy: user.uid,
+        createdAt: previousRsvp?.createdAt ?? FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      if (previousStatus !== "going") {
+        const previousGoing = Number(session.rsvpGoingCount ?? 0);
+        const previousAway = Number(session.rsvpNotGoingCount ?? 0);
+        t.set(sessionRef, {
+          rsvpGoingCount: previousGoing + 1,
+          rsvpNotGoingCount: previousStatus === "not_going" ? Math.max(0, previousAway - 1) : previousAway,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      }
+
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "player/joined",
-        details: { playerId: targetPlayerId, displayName },
+        details: { playerId: targetPlayerId, displayName, playerKind, rsvpResponse },
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -129,7 +158,7 @@ export async function updatePlayerStatus(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to update player status"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can update players"), { code: "FORBIDDEN" });
       }
 
       const playerRef = db.doc(`sessions/${sessionId}/players/${sessionPlayerId}`);
@@ -187,7 +216,7 @@ export async function addLatePlayer(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to add players"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can add players"), { code: "FORBIDDEN" });
       }
 
       if (session.status !== "active" && session.status !== "paused") {
@@ -282,7 +311,7 @@ export async function markPlayerInjured(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to update player status"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can update players"), { code: "FORBIDDEN" });
       }
 
       const playerRef = db.doc(`sessions/${sessionId}/players/${sessionPlayerId}`);
@@ -349,7 +378,7 @@ export async function addGuestPlayerToSession(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to add players"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can add players"), { code: "FORBIDDEN" });
       }
 
       const guestDocRef = db.collection(`sessions/${sessionId}/players`).doc();
@@ -383,17 +412,6 @@ export async function addGuestPlayerToSession(
         pointDifference: 0,
         sitOutCount: 0,
       });
-
-      // Write player in group so they show up for squad stats
-      t.set(db.doc(`groups/${session.groupId}/players/${playerId}`), {
-        userId: null,
-        displayName: name,
-        email: null,
-        skillLevel,
-        isGuest: true,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true });
 
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
@@ -439,7 +457,7 @@ export async function swapPlayers(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to swap players"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can swap players"), { code: "FORBIDDEN" });
       }
 
       const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
@@ -456,6 +474,11 @@ export async function swapPlayers(
       if (!inPlayerSnap.exists) throw Object.assign(new Error("Replacement player not found"), { code: "NOT_FOUND" });
       const inPlayer = inPlayerSnap.data()!;
 
+      const [matchesSnap, sitOutsSnap] = await Promise.all([
+        t.get(db.collection(`sessions/${sessionId}/matches`)),
+        t.get(db.collection(`sessions/${sessionId}/sitOuts`)),
+      ]);
+
       if (!isSchedulable(inPlayer.status)) {
         throw Object.assign(new Error("Replacement player is not available to play"), { code: "FAILED_PRECONDITION" });
       }
@@ -470,6 +493,20 @@ export async function swapPlayers(
         throw Object.assign(new Error("Replacement player is already in this match"), { code: "FAILED_PRECONDITION" });
       }
 
+      const replacementIsOnAnotherCourt = matchesSnap.docs.some((doc) => {
+        if (doc.id === matchId) return false;
+        const otherMatch = doc.data();
+        if (otherMatch.status !== "scheduled" || otherMatch.isLocked) return false;
+        const otherIds: string[] = [
+          ...(otherMatch.teamAIds || otherMatch.teamA?.map((p: any) => p.playerId) || []),
+          ...(otherMatch.teamBIds || otherMatch.teamB?.map((p: any) => p.playerId) || []),
+        ];
+        return otherIds.includes(inPlayerId);
+      });
+      if (replacementIsOnAnotherCourt) {
+        throw Object.assign(new Error("Replacement player is already assigned to another current court"), { code: "FAILED_PRECONDITION" });
+      }
+
       const swap = (p: { playerId: string; displayName: string }) =>
         p.playerId === outPlayerId ? { playerId: inPlayerId, displayName: inPlayer.displayName } : p;
       const newTeamA = (match.teamA as Array<{ playerId: string; displayName: string }>).map(swap);
@@ -482,10 +519,26 @@ export async function swapPlayers(
         teamBIds: newTeamB.map((p) => p.playerId),
       });
 
+      // A generated sit-out represents who was excluded from this assignment
+      // cycle. When that player is manually put on court, transfer the record
+      // to the player they replaced so later games use the actual lineup.
+      const incomingSitOuts = sitOutsSnap.docs.filter((doc) => {
+        const sitOut = doc.data();
+        return sitOut.playerId === inPlayerId && sitOut.roundNumber === match.roundNumber;
+      });
+      const outgoingAlreadyRecorded = sitOutsSnap.docs.some((doc) => {
+        const sitOut = doc.data();
+        return sitOut.playerId === outPlayerId && sitOut.roundNumber === match.roundNumber;
+      });
+      for (const [index, sitOutDoc] of incomingSitOuts.entries()) {
+        if (outgoingAlreadyRecorded || index > 0) t.delete(sitOutDoc.ref);
+        else t.update(sitOutDoc.ref, { playerId: outPlayerId });
+      }
+
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "match/updated",
-        details: { matchId, outPlayerId, inPlayerId, action: "swap" },
+        details: { matchId, outPlayerId, inPlayerId, action: "swap", rotationRecordsMoved: incomingSitOuts.length },
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -521,7 +574,7 @@ export async function moveMatch(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to move matches"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can move matches"), { code: "FORBIDDEN" });
       }
 
       const court = (session.courts || []).find((c: any) => (c.courtId || c.id) === courtId && c.isActive);
@@ -583,7 +636,7 @@ export async function disableCourt(
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canManageSessionPlayers(role)) {
-        throw Object.assign(new Error("Must be a squad member to disable courts"), { code: "FORBIDDEN" });
+        throw Object.assign(new Error("Only group owners and admins can change courts"), { code: "FORBIDDEN" });
       }
 
       const courts = (session.courts || []) as Array<any>;

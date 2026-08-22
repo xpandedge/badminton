@@ -107,7 +107,16 @@ export function watchJoinRequests(
 /** Watches the group doc itself (name + live invite code). */
 export function watchGroupDoc(
   groupId: string,
-  cb: (data: { name: string; inviteCode?: string } | null) => void,
+  cb: (data: {
+    name: string;
+    inviteCode?: string;
+    rsvpDefaults?: {
+      totalPlayers?: number;
+      casualConfirmedSlots?: number;
+      waitlistEnabled?: boolean;
+      cutoffHoursBeforeStart?: number | null;
+    };
+  } | null) => void,
   onError?: (error: Error) => void,
 ): () => void {
   const { db } = getFirebaseServices();

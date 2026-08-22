@@ -5,9 +5,9 @@
 
 // Session-level statuses
 const SESSION_STATUS_LABELS: Record<string, string> = {
-  draft:     "Upcoming",
+  draft:     "Not started",
   scheduled: "Upcoming",
-  active:    "Live Now",
+  active:    "Playing now",
   paused:    "Paused",
   completed: "Finished",
   cancelled: "Cancelled",
@@ -16,7 +16,7 @@ const SESSION_STATUS_LABELS: Record<string, string> = {
 // Player-level statuses (within a session)
 const PLAYER_STATUS_LABELS: Record<string, string> = {
   active:     "Playing",
-  waiting:    "Waiting",
+  waiting:    "Stepped Out",
   checked_in: "Playing",
   left:       "Left",
   removed:    "Removed",

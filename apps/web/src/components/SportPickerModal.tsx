@@ -15,7 +15,7 @@ const SPORTS: Array<{
     id: "pickleball",
     label: "Pickleball",
     target: "11 pts",
-    tagline: "Fast rallies. Loud pops. Pure chaos.",
+    tagline: "Fast rallies. Fair rotations. Easy scores.",
     accentColor: "var(--volt-500)",
     textColor: "var(--ink-800)",
   },
@@ -75,7 +75,7 @@ export function SportPickerModal() {
             color: "rgba(246,248,244,0.45)",
             marginBottom: "0.625rem",
           }}>
-            {isFirstTime ? "Welcome to PickleBaddies" : "Change sport"}
+            {isFirstTime ? "Welcome to DuoRally" : "Change sport"}
           </div>
           <h2 style={{
             fontFamily: "var(--font-display)",

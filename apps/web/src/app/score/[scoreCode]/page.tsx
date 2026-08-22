@@ -112,7 +112,7 @@ export default function ScoreLinkPage({ params }: { params: Promise<{ scoreCode:
 
         {sessionNotActive && (
           <div style={{ background: "var(--surface)", border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem", textAlign: "center" }}>
-            <p style={{ color: "var(--text-2)", fontWeight: 700 }}>Scoring not available — session is {data.sessionStatus}.</p>
+            <p style={{ color: "var(--text-2)", fontWeight: 700 }}>Scoring opens when the session starts.</p>
           </div>
         )}
 

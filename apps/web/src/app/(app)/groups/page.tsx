@@ -132,7 +132,7 @@ export default function GroupsPage() {
               letterSpacing: "-0.025em",
               color: "var(--n-50)",
             }}>
-              Your Groups
+              Your Squads
             </h1>
           </div>
           <div style={{
@@ -150,20 +150,7 @@ export default function GroupsPage() {
                 {groups.length}
               </div>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 4 }}>
-                Active groups
-              </div>
-            </div>
-            <div style={{
-              background: "rgba(246,248,244,0.08)",
-              border: "1px solid rgba(246,248,244,0.12)",
-              borderRadius: "var(--r-xl)",
-              padding: "1rem",
-            }}>
-              <div style={{ fontFamily: "var(--font-display-tight)", fontSize: "2rem", fontWeight: 900, color: "var(--volt-500)", lineHeight: 1 }}>
-                {name.trim() ? "1" : "0"}
-              </div>
-              <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 4 }}>
-                Draft ready
+                Active squads
               </div>
             </div>
           </div>
@@ -284,7 +271,7 @@ export default function GroupsPage() {
                       <div style={{ color: "var(--text-1)", fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {g.name}
                       </div>
-                      <div style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>Open squad workspace</div>
+                      <div style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>Open squad</div>
                     </div>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <polyline points="9 18 15 12 9 6" />
@@ -384,7 +371,7 @@ export default function GroupsPage() {
               <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
                 Create Squad
               </h2>
-              <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Start a reusable player roster.</p>
+              <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Create a squad for your regular players.</p>
             </div>
           </div>
 
@@ -396,7 +383,7 @@ export default function GroupsPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Group name"
+              placeholder="Squad name"
               required
             />
             <textarea

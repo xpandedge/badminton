@@ -1,34 +1,73 @@
 "use client";
 
-import { useEffect, useRef, useState, use } from "react";
+import { useCallback, useEffect, useRef, useState, use } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
-import { canManageGroup } from "@picklebaddies/domain";
+import {
+  canLeaveGroup,
+  canManageAdmins,
+  canManageGroup,
+  canRemoveGroupMember,
+  groupRoleLabel,
+  normalizeGroupRole,
+  type GroupRole,
+  type SquadPlayerKind,
+} from "@picklebaddies/domain";
+import { shareUrl } from "@/lib/config/site";
 import { getGroup, watchGroupMembers, watchJoinRequests, watchGroupDoc, type JoinRequest } from "@/lib/groups/groups";
 import { watchGroupPlayers } from "@/lib/players/players";
-import { addVenue, addCourt, watchCourts, watchVenues } from "@/lib/groups/venues";
-import { type GroupRole } from "@picklebaddies/domain";
+import { watchCourts, watchVenues } from "@/lib/groups/venues";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
 import { rsvpToSession, deleteSession, getGroupSessionsAction } from "@/server/sessions/actions";
-import { addMemberToSquad, addGuestPlayerToSquad, approveJoinRequest, rejectJoinRequest, rotateInviteCode, removePlayerFromSquad } from "@/server/squads/actions";
+import { addMemberToSquad, addVenueToSquad, addCourtToSquadVenue, approveJoinRequest, rejectJoinRequest, leaveSquad, rotateInviteCode, removePlayerFromSquad, transferSquadOwnership, updateMemberRole, updateSquadPlayerKind, updateSquadRsvpDefaults } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
 import { getFirestore, doc, getDoc } from "firebase/firestore";
 import { getApp } from "firebase/app";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
+import { Toast, type ToastMessage } from "@/components/Toast";
 
 type VenueRow = { id: string; name: string };
 type CourtRow = { id: string; name?: string; courtNumber?: number; isActive?: boolean };
-type PlayerRow = { id: string; userId?: string | null; displayName: string; email: string | null; skillLevel?: string; isGuest?: boolean };
-type MemberRow = { userId: string; role: string; displayName?: string; email?: string };
+type PlayerRow = {
+  id: string;
+  userId?: string | null;
+  displayName: string;
+  email: string | null;
+  skillLevel?: string;
+  isGuest?: boolean;
+  playerKind?: SquadPlayerKind;
+  squadRating?: number;
+  squadGrade?: string;
+  squadGradedGames?: number;
+  squadWins?: number;
+  squadLosses?: number;
+  squadPointsFor?: number;
+  squadPointsAgainst?: number;
+  squadPointDiff?: number;
+};
+type MemberRow = { userId: string; role: GroupRole; displayName?: string; email?: string };
+type SquadRsvpDefaultsState = {
+  totalPlayers: number;
+  casualConfirmedSlots: number;
+  waitlistEnabled: boolean;
+  cutoffHoursBeforeStart: number | null;
+};
 
-const ROLE_STYLE: Record<string, { bg: string; color: string }> = {
-  owner:     { bg: "var(--volt-500)",       color: "var(--ink-800)" },
-  organiser: { bg: "var(--ink-800)",        color: "var(--volt-500)" },
-  member:    { bg: "var(--surface-sunken)", color: "var(--text-2)" },
+const DEFAULT_SQUAD_RSVP_DEFAULTS: SquadRsvpDefaultsState = {
+  totalPlayers: 11,
+  casualConfirmedSlots: 3,
+  waitlistEnabled: true,
+  cutoffHoursBeforeStart: null,
 };
 
 export default function GroupDetailsPage({ params }: { params: Promise<{ groupId: string }> }) {
   const { groupId } = use(params);
+  const router = useRouter();
   const role = useGroupRole(groupId);
+  const canAdminister = canManageGroup(role);
+  const isOwner = canManageAdmins(role);
 
   const [group, setGroup] = useState<{ name: string; description: string | null } | null>(null);
   const [players, setPlayers] = useState<PlayerRow[]>([]);
@@ -38,22 +77,26 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
   // Member add state — combobox search
   const [searchQuery, setSearchQuery] = useState("");
+  const [memberEmail, setMemberEmail] = useState("");
   const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserSearchResult | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [newMemberRole, setNewMemberRole] = useState<Exclude<GroupRole, "owner">>("member");
+  const [newMemberRole, setNewMemberRole] = useState<"member" | "admin">("member");
   const [memberAddError, setMemberAddError] = useState<string | null>(null);
   const [memberAddSuccess, setMemberAddSuccess] = useState<string | null>(null);
   const [isAddingMember, setIsAddingMember] = useState(false);
+  const [roleChangingId, setRoleChangingId] = useState<string | null>(null);
+  const [ownershipChangingId, setOwnershipChangingId] = useState<string | null>(null);
+  const [isLeaving, setIsLeaving] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Guest player add state
-  const [guestName, setGuestName] = useState("");
-  const [guestSkill, setGuestSkill] = useState("unknown");
-  const [isAddingGuest, setIsAddingGuest] = useState(false);
-  const [guestAddError, setGuestAddError] = useState<string | null>(null);
-  const [guestAddSuccess, setGuestAddSuccess] = useState<string | null>(null);
+  const { confirm: requestConfirmation, confirmationDialog } = useConfirmDialog();
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const notify = useCallback((message: string, tone: ToastMessage["tone"] = "success") => {
+    setToast({ id: Date.now(), message, tone });
+  }, []);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   // Venue add state
   const [venueName, setVenueName] = useState("");
@@ -64,6 +107,10 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionFilter, setSessionFilter] = useState<"all" | "upcoming" | "active" | "past">("upcoming");
   const [activeTab, setActiveTab] = useState<"members" | "sessions">("members");
+  const [peopleView, setPeopleView] = useState<"rankings" | "manage">("rankings");
+  const [rsvpDefaults, setRsvpDefaults] = useState<SquadRsvpDefaultsState>(DEFAULT_SQUAD_RSVP_DEFAULTS);
+  const [isSavingRsvpDefaults, setIsSavingRsvpDefaults] = useState(false);
+  const [playerKindChangingId, setPlayerKindChangingId] = useState<string | null>(null);
 
   // Self-join: invite code + incoming requests
   const [inviteCode, setInviteCode] = useState<string | undefined>(undefined);
@@ -83,15 +130,68 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 1500);
   };
+  const inviteUrl = shareUrl("/dashboard");
+  const inviteMessage = inviteCode
+    ? `Join ${group?.name ?? "our squad"} on DuoRally. Use invite code ${inviteCode}: ${inviteUrl}`
+    : "";
+  const whatsappInviteUrl = inviteMessage
+    ? `https://wa.me/?text=${encodeURIComponent(inviteMessage)}`
+    : "#";
+  const handleShareInvite = async () => {
+    if (!inviteCode) return;
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        await (navigator as Navigator & { share: (data: ShareData) => Promise<void> }).share({
+          title: `Join ${group?.name ?? "our DuoRally squad"}`,
+          text: inviteMessage,
+          url: inviteUrl,
+        });
+        return;
+      } catch {
+        /* cancelled or unsupported */
+      }
+    }
+    await navigator.clipboard?.writeText(inviteMessage);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 1500);
+  };
   const handleRotateCode = async () => {
     setRotating(true);
     const res = await rotateInviteCode(groupId).catch(() => null);
     if (res?.ok) setInviteCode(res.data.inviteCode);
     setRotating(false);
   };
-  const handleApprove = async (uid: string) => {
+  const handleRsvpDefaultsSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isSavingRsvpDefaults) return;
+    setIsSavingRsvpDefaults(true);
+    const result = await updateSquadRsvpDefaults(groupId, rsvpDefaults).catch((error) => ({
+      ok: false as const,
+      message: error.message,
+    }));
+    setIsSavingRsvpDefaults(false);
+    if (result?.ok) notify("Default RSVP capacity saved.");
+    else notify(result?.message ?? "Could not save RSVP defaults.", "error");
+  };
+  const handlePlayerKindChange = async (playerId: string, name: string, kind: SquadPlayerKind) => {
+    if (playerKindChangingId === playerId) return;
+    const previous = players;
+    setPlayers((current) => current.map((player) => (player.id === playerId ? { ...player, playerKind: kind } : player)));
+    setPlayerKindChangingId(playerId);
+    const result = await updateSquadPlayerKind(groupId, playerId, kind).catch((error) => ({
+      ok: false as const,
+      message: error.message,
+    }));
+    setPlayerKindChangingId(null);
+    if (result?.ok) notify(`${name} is marked ${kind === "regular" ? "Regular" : "Casual"}.`);
+    else {
+      setPlayers(previous);
+      notify(result?.message ?? "Could not update player type.", "error");
+    }
+  };
+  const handleApprove = async (uid: string, kind: SquadPlayerKind) => {
     setResolvingReq(uid);
-    await approveJoinRequest(groupId, uid).catch(() => null);
+    await approveJoinRequest(groupId, uid, kind).catch(() => null);
     setResolvingReq(null);
   };
   const handleReject = async (uid: string) => {
@@ -100,8 +200,83 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     setResolvingReq(null);
   };
   const handleRemovePlayer = async (targetId: string, name: string) => {
-    if (!confirm(`Remove ${name} from this squad?`)) return;
-    await removePlayerFromSquad(groupId, targetId).catch((e) => alert(e.message));
+    const confirmed = await requestConfirmation({
+      title: `Remove ${name}?`,
+      description: "They will lose access to this squad. Their completed session results will stay intact.",
+      confirmLabel: "Remove member",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const result = await removePlayerFromSquad(groupId, targetId).catch(() => null);
+    if (result?.ok) notify(`${name} was removed from the squad.`);
+    else notify(result?.message ?? "Could not remove this member.", "error");
+  };
+  const handleRoleChange = async (
+    targetUserId: string,
+    name: string,
+    currentRole: GroupRole,
+  ) => {
+    const nextRole = normalizeGroupRole(currentRole) === "admin" ? "member" : "admin";
+    const confirmed = await requestConfirmation({
+      title: nextRole === "admin" ? `Make ${name} an admin?` : `Make ${name} a member?`,
+      description: nextRole === "admin"
+        ? "They will be able to manage players, venues, courts, and sessions. Only the owner can manage admin roles."
+        : "They will stay in the squad but will no longer be able to manage players, venues, courts, or sessions.",
+      confirmLabel: nextRole === "admin" ? "Make admin" : "Make member",
+    });
+    if (!confirmed) return;
+    setRoleChangingId(targetUserId);
+    const result = await updateMemberRole(groupId, targetUserId, nextRole).catch(() => null);
+    setRoleChangingId(null);
+    if (result?.ok) notify(`${name} is now ${nextRole === "admin" ? "an admin" : "a member"}.`);
+    else notify(result?.message ?? "Could not change this role.", "error");
+  };
+  const handleMemberRoleSelect = async (
+    targetUserId: string,
+    name: string,
+    currentRole: GroupRole,
+    nextRole: "member" | "admin" | "owner",
+  ) => {
+    const normalizedRole = normalizeGroupRole(currentRole);
+    if (!normalizedRole || normalizedRole === nextRole) return;
+    if (nextRole === "owner") {
+      if (!isOwner || targetUserId === user?.uid || currentRole === "owner") return;
+      await handleTransferOwnership(targetUserId, name);
+      return;
+    }
+    if (currentRole === "owner") return;
+    await handleRoleChange(targetUserId, name, currentRole);
+  };
+  const handleTransferOwnership = async (targetUserId: string, name: string) => {
+    const confirmed = await requestConfirmation({
+      title: `Make ${name} the squad owner?`,
+      description: `${name} will control ownership and admin roles. You will become an admin and can then leave the squad if needed.`,
+      confirmLabel: "Transfer ownership",
+    });
+    if (!confirmed) return;
+    setOwnershipChangingId(targetUserId);
+    const result = await transferSquadOwnership(groupId, targetUserId).catch(() => null);
+    setOwnershipChangingId(null);
+    if (result?.ok) notify(`${name} is now the squad owner.`);
+    else notify(result?.message ?? "Could not transfer ownership.", "error");
+  };
+  const handleLeaveSquad = async () => {
+    const confirmed = await requestConfirmation({
+      title: `Leave ${group?.name ?? "this squad"}?`,
+      description: "You will lose access to this squad and its upcoming sessions. Your completed results and rankings will stay.",
+      confirmLabel: "Leave squad",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setIsLeaving(true);
+    const result = await leaveSquad(groupId).catch(() => null);
+    if (!result?.ok) {
+      setIsLeaving(false);
+      notify(result?.message ?? "Could not leave this squad.", "error");
+      return;
+    }
+    router.replace("/dashboard");
+    router.refresh();
   };
   const handleRsvp = async (sessionId: string, status: "going" | "not_going") => {
     // Prevent double-click
@@ -120,13 +295,21 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       setRsvpStatus((s) => ({ ...s, [sessionId]: prev }));
       setRsvpToast((t) => ({ ...t, [sessionId]: res.message || "Failed to update RSVP" }));
     } else {
-      setRsvpToast((t) => ({ ...t, [sessionId]: status === "going" ? "✅ You're in!" : "👋 Marked as not playing" }));
+      setRsvpToast((t) => ({ ...t, [sessionId]: status === "going" ? "You're in." : "Marked away." }));
       setTimeout(() => setRsvpToast((t) => { const n = { ...t }; delete n[sessionId]; return n; }), 2500);
     }
   };
   const handleCancelSession = async (sessionId: string, sessionName: string) => {
-    if (!confirm(`Cancel session "${sessionName}"?`)) return;
-    await deleteSession(sessionId).catch((e) => alert(e.message));
+    const confirmed = await requestConfirmation({
+      title: `Cancel ${sessionName}?`,
+      description: "It will move to Past and can no longer be run. Any completed scores will stay unchanged.",
+      confirmLabel: "Cancel session",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const result = await deleteSession(sessionId).catch((error) => ({ ok: false as const, message: error.message }));
+    if (result?.ok) notify(`${sessionName} was cancelled.`);
+    else notify(result?.message ?? "Could not cancel this session.", "error");
   };
 
   useEffect(() => {
@@ -147,8 +330,16 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     const unsubSessions = watchGroupSessions(groupId, (sList) => {
       if (sList.length > 0) setSessions(sList);
     }, () => {});
-    const unsubGroupDoc = watchGroupDoc(groupId, (g) => setInviteCode(g?.inviteCode), () => {});
-    const unsubRequests = watchJoinRequests(groupId, setJoinRequests, () => setJoinRequests([]));
+    const unsubGroupDoc = watchGroupDoc(groupId, (g) => {
+      setInviteCode(g?.inviteCode);
+      const defaults = g?.rsvpDefaults;
+      setRsvpDefaults({
+        totalPlayers: Number(defaults?.totalPlayers ?? DEFAULT_SQUAD_RSVP_DEFAULTS.totalPlayers),
+        casualConfirmedSlots: Number(defaults?.casualConfirmedSlots ?? DEFAULT_SQUAD_RSVP_DEFAULTS.casualConfirmedSlots),
+        waitlistEnabled: defaults?.waitlistEnabled ?? DEFAULT_SQUAD_RSVP_DEFAULTS.waitlistEnabled,
+        cutoffHoursBeforeStart: defaults?.cutoffHoursBeforeStart ?? null,
+      });
+    }, () => {});
 
     return () => {
       unsubPlayers();
@@ -156,9 +347,20 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       unsubVenues();
       unsubSessions();
       unsubGroupDoc();
-      unsubRequests();
     };
   }, [groupId]);
+
+  useEffect(() => {
+    if (!groupId || !canAdminister) {
+      setJoinRequests([]);
+      return;
+    }
+    return watchJoinRequests(groupId, setJoinRequests, () => setJoinRequests([]));
+  }, [canAdminister, groupId]);
+
+  useEffect(() => {
+    if (!isOwner) setNewMemberRole("member");
+  }, [isOwner]);
 
   // Load existing RSVP statuses for the current user whenever sessions change
   useEffect(() => {
@@ -218,6 +420,35 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
   // Build a role lookup from the members collection
   const roleByUserId = new Map(members.map((m) => [m.userId, m.role]));
+  const currentUserPlayerKind: SquadPlayerKind = players.find((player) =>
+    player.id === user?.uid || player.userId === user?.uid
+  )?.playerKind ?? "regular";
+  const squadRankingRows = [...players]
+    .filter((player) => !player.isGuest)
+    .map((player) => {
+      const played = Number(player.squadGradedGames) || 0;
+      const wins = Number(player.squadWins) || 0;
+      const losses = Number(player.squadLosses) || 0;
+      const pointDiff = Number(player.squadPointDiff) || 0;
+      const rating = Number(player.squadRating) || 1000;
+      return {
+        ...player,
+        played,
+        wins,
+        losses,
+        pointDiff,
+        rating,
+        winPct: played > 0 ? Math.round((wins / played) * 100) : 0,
+        grade: player.squadGrade || "C",
+        provisional: played < 3,
+      };
+    })
+    .sort((a, b) => {
+      if (b.rating !== a.rating) return b.rating - a.rating;
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      if (b.pointDiff !== a.pointDiff) return b.pointDiff - a.pointDiff;
+      return (a.displayName ?? "").localeCompare(b.displayName ?? "");
+    });
 
   function handleSearchInput(value: string) {
     setSearchQuery(value);
@@ -250,43 +481,27 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUser || isAddingMember) return;
+    if (!memberEmail.trim() || isAddingMember) return;
     setIsAddingMember(true);
     setMemberAddError(null);
     setMemberAddSuccess(null);
-    const result = await addMemberToSquad(groupId, selectedUser.email ?? "", newMemberRole).catch(() => null);
+    const result = await addMemberToSquad(groupId, memberEmail.trim(), newMemberRole).catch(() => null);
     if (!result || !result.ok) {
       setMemberAddError(result?.message ?? "Could not add member. Please try again.");
     } else {
-      setMemberAddSuccess(`${selectedUser.displayName || selectedUser.email} added as ${newMemberRole}.`);
-      setSelectedUser(null);
-      setSearchQuery("");
+      setMemberAddSuccess(`${memberEmail.trim()} added as ${newMemberRole}.`);
+      setMemberEmail("");
+      setNewMemberRole("member");
     }
     setIsAddingMember(false);
-  };
-
-  const handleAddGuestPlayer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!guestName.trim() || isAddingGuest) return;
-    setIsAddingGuest(true);
-    setGuestAddError(null);
-    setGuestAddSuccess(null);
-    const result = await addGuestPlayerToSquad({ squadId: groupId, displayName: guestName, skillLevel: guestSkill }).catch(() => null);
-    if (!result || !result.ok) {
-      setGuestAddError(result?.message ?? "Could not add guest player. Please try again.");
-    } else {
-      setGuestAddSuccess(`"${guestName.trim()}" added as a guest player.`);
-      setGuestName("");
-      setGuestSkill("unknown");
-    }
-    setIsAddingGuest(false);
   };
 
   const handleAddVenue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!venueName.trim()) return;
-    await addVenue(groupId, venueName);
-    setVenueName("");
+    const result = await addVenueToSquad(groupId, venueName).catch(() => null);
+    if (result?.ok) setVenueName("");
+    else notify(result?.message ?? "Could not add venue.", "error");
   };
 
   const handleAddCourt = async (e: React.FormEvent, venueId: string) => {
@@ -295,9 +510,13 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     if (!name) return;
     const fallbackNumber = (courtsByVenue[venueId]?.length ?? 0) + 1;
     const courtNumber = courtNumbers[venueId] || fallbackNumber;
-    await addCourt(groupId, venueId, name, courtNumber);
-    setCourtNames((prev) => ({ ...prev, [venueId]: "" }));
-    setCourtNumbers((prev) => ({ ...prev, [venueId]: courtNumber + 1 }));
+    const result = await addCourtToSquadVenue(groupId, venueId, name, courtNumber).catch(() => null);
+    if (result?.ok) {
+      setCourtNames((prev) => ({ ...prev, [venueId]: "" }));
+      setCourtNumbers((prev) => ({ ...prev, [venueId]: courtNumber + 1 }));
+    } else {
+      notify(result?.message ?? "Could not add court.", "error");
+    }
   };
 
   return (
@@ -328,7 +547,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               fontSize: "0.625rem", fontWeight: 700,
               letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.875rem",
             }}>
-              {role ?? "No role"}
+              {groupRoleLabel(role) ?? "No role"}
             </span>
             <h1 style={{
               fontFamily: "var(--font-display)",
@@ -425,7 +644,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                     const dateObj = s.startsAt && typeof s.startsAt.toDate === "function" ? s.startsAt.toDate() : null;
                     const ts = dateObj
                       ? dateObj.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                      : "Scheduled";
+                      : "Upcoming";
                     const goingCount = s.rsvpGoingCount ?? 0;
                     const notGoingCount = s.rsvpNotGoingCount ?? 0;
 
@@ -450,7 +669,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                               background: "var(--volt-500)", color: "var(--ink-800)",
                               fontFamily: "var(--font-mono)", fontSize: "0.6875rem", fontWeight: 900,
                             }}>
-                              👍 {goingCount} Going · 👎 {notGoingCount} Not Going
+                              {goingCount} in · {notGoingCount} away
                             </span>
                             <a href={`/sessions/${s.id}/live`} style={{
                               height: 34, padding: "0 0.875rem", borderRadius: "var(--r-md)",
@@ -470,7 +689,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                             <div style={{ paddingTop: "0.625rem", borderTop: "1px solid rgba(246,248,244,0.12)" }}>
                               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                                 <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(246,248,244,0.6)" }}>
-                                  {myStatus ? "Change RSVP:" : "Your RSVP:"}
+                                  {currentUserPlayerKind === "casual" ? "Casual interest:" : "You're in by default:"}
                                 </span>
                                 <button
                                   type="button"
@@ -488,7 +707,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                                     boxShadow: myStatus === "going" ? "0 0 0 3px rgba(198,241,53,0.25)" : "none",
                                   }}
                                 >
-                                  {isLoading ? "…" : myStatus === "going" ? "✅ I'm Playing" : "👍 I'm Playing"}
+                                  {isLoading ? "..." : currentUserPlayerKind === "casual" ? "I'm interested" : myStatus === "not_going" ? "I'm back in" : "I'm in"}
                                 </button>
                                 <button
                                   type="button"
@@ -505,14 +724,14 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                                     transition: "all 0.15s ease",
                                   }}
                                 >
-                                  {isLoading ? "…" : myStatus === "not_going" ? "❌ Not Playing" : "👎 Not Playing"}
+                                  {isLoading ? "..." : currentUserPlayerKind === "casual" ? "Not interested" : "I'm away"}
                                 </button>
                               </div>
                               {toast && (
                                 <div style={{
                                   marginTop: "0.5rem",
                                   fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 700,
-                                  color: toast.startsWith("✅") ? "var(--volt-500)" : "rgba(246,100,100,0.9)",
+                                  color: toast === "You're in." ? "var(--volt-500)" : "rgba(246,100,100,0.9)",
                                 }}>
                                   {toast}
                                 </div>
@@ -527,6 +746,62 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               </section>
             );
           })()}
+
+          <section style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "0.75rem",
+            flexWrap: "wrap",
+          }}>
+            <div>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                People
+              </span>
+              <p style={{ color: "var(--text-2)", fontSize: "0.875rem", marginTop: "0.2rem" }}>
+                {peopleView === "rankings" ? "Grades, form, and squad standings." : "Members, roles, invites, and setup."}
+              </p>
+            </div>
+            <div style={{
+              display: "inline-grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "0.25rem",
+              padding: "0.25rem",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-pill)",
+              background: "var(--surface)",
+              boxShadow: "var(--shadow-xs)",
+            }}>
+              {(["rankings", "manage"] as const).map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  onClick={() => setPeopleView(view)}
+                  aria-pressed={peopleView === view}
+                  style={{
+                    minWidth: 112,
+                    height: 36,
+                    padding: "0 0.875rem",
+                    border: "none",
+                    borderRadius: "var(--r-pill)",
+                    background: peopleView === view ? "var(--ink-800)" : "transparent",
+                    color: peopleView === view ? "var(--volt-500)" : "var(--text-2)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.6875rem",
+                    fontWeight: 900,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    cursor: "pointer",
+                  }}
+                >
+                  {view === "rankings" ? "Rankings" : "Manage"}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {peopleView === "manage" && (
+          <>
           {/* Pending join requests — any member can approve/reject */}
           {joinRequests.length > 0 && (
             <section data-testid="join-requests" style={{
@@ -540,14 +815,21 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>People asking to join this squad.</p>
               <div style={{ display: "grid", gap: "0.5rem" }}>
                 {joinRequests.map((r) => (
-                  <div key={r.userId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "0.5rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem 0.75rem" }}>
+                  <div key={r.userId} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto auto", gap: "0.5rem", alignItems: "center", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.625rem 0.75rem" }}>
                     <span style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.displayName}</span>
                     <button
-                      onClick={() => handleApprove(r.userId)}
+                      onClick={() => handleApprove(r.userId, "regular")}
                       disabled={resolvingReq === r.userId}
                       style={{ height: 34, padding: "0 0.75rem", border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer", fontSize: "0.8125rem" }}
                     >
-                      {resolvingReq === r.userId ? "…" : "Approve"}
+                      {resolvingReq === r.userId ? "..." : "Regular"}
+                    </button>
+                    <button
+                      onClick={() => handleApprove(r.userId, "casual")}
+                      disabled={resolvingReq === r.userId}
+                      style={{ height: 34, padding: "0 0.75rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer", fontSize: "0.8125rem" }}
+                    >
+                      {resolvingReq === r.userId ? "..." : "Casual"}
                     </button>
                     <button
                       onClick={() => handleReject(r.userId)}
@@ -569,13 +851,19 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
               animation: "pb-rise 400ms 50ms var(--ease-out) both",
             }}>
-              <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>Invite code</h2>
-              <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>Share this code — anyone who enters it joins instantly.</p>
+              <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>Share invite</h2>
+              <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.875rem" }}>Send the squad invite and let players join when they are ready.</p>
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                 <code style={{ fontFamily: "var(--font-mono)", fontSize: "1.5rem", fontWeight: 800, letterSpacing: "0.15em", background: "var(--surface-sunken)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: "0.5rem 1rem", color: "var(--text-1)" }}>
                   {inviteCode}
                 </code>
-                <button onClick={handleCopyCode} style={{ height: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, cursor: "pointer" }}>
+                <button onClick={handleShareInvite} style={{ height: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer" }}>
+                  Share invite
+                </button>
+                <a href={whatsappInviteUrl} target="_blank" rel="noreferrer" style={{ height: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)", background: "#25D366", color: "var(--ink-800)", fontWeight: 900, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+                  WhatsApp
+                </a>
+                <button onClick={handleCopyCode} style={{ height: 44, padding: "0 1rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer" }}>
                   {copiedCode ? "Copied!" : "Copy"}
                 </button>
                 {canManageGroup(role) && (
@@ -587,12 +875,99 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
             </section>
           )}
 
-          {/* Add member — searchable combobox, owner only */}
           {canManageGroup(role) && (
             <section style={{
               background: "var(--surface)", border: "1px solid var(--border)",
               borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
+              animation: "pb-rise 400ms 55ms var(--ease-out) both",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap", marginBottom: "0.875rem" }}>
+                <div>
+                  <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
+                    Default RSVP capacity
+                  </h2>
+                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginTop: "0.2rem" }}>
+                    New sessions start with these numbers. You can still adjust an individual session.
+                  </p>
+                </div>
+                <span style={{
+                  padding: "4px 9px", borderRadius: "var(--r-pill)",
+                  background: "rgba(198,241,53,0.14)", color: "var(--ink-800)",
+                  border: "1px solid var(--volt-500)",
+                  fontFamily: "var(--font-mono)", fontSize: "0.625rem",
+                  fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase",
+                }}>
+                  Squad default
+                </span>
+              </div>
+              <form onSubmit={handleRsvpDefaultsSubmit} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: "0.75rem", alignItems: "end" }}>
+                <label style={{ display: "grid", gap: "0.35rem", color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                  Total player capacity
+                  <input
+                    className="pb-input"
+                    type="number"
+                    min={4}
+                    value={rsvpDefaults.totalPlayers}
+                    onChange={(event) => setRsvpDefaults((current) => ({ ...current, totalPlayers: Number(event.target.value) }))}
+                    aria-label="Total player capacity"
+                    style={{ height: 42, borderRadius: "var(--r-md)", marginTop: 0 }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: "0.35rem", color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800 }}>
+                  RSVP cutoff hours
+                  <input
+                    className="pb-input"
+                    type="number"
+                    min={0}
+                    value={rsvpDefaults.cutoffHoursBeforeStart ?? ""}
+                    onChange={(event) => setRsvpDefaults((current) => ({
+                      ...current,
+                      cutoffHoursBeforeStart: event.target.value === "" ? null : Number(event.target.value),
+                    }))}
+                    aria-label="RSVP cutoff hours before start"
+                    placeholder="No cutoff"
+                    style={{ height: 42, borderRadius: "var(--r-md)", marginTop: 0 }}
+                  />
+                </label>
+                <label style={{
+                  minHeight: 42,
+                  display: "flex", alignItems: "center", gap: "0.5rem",
+                  padding: "0 0.75rem", border: "1px solid var(--border)",
+                  borderRadius: "var(--r-md)", background: "var(--surface-sunken)",
+                  color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 800,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={rsvpDefaults.waitlistEnabled}
+                    onChange={(event) => setRsvpDefaults((current) => ({ ...current, waitlistEnabled: event.target.checked }))}
+                    name="waitlistEnabled"
+                  />
+                  Keep a casual waiting list
+                </label>
+                <button
+                  type="submit"
+                  disabled={isSavingRsvpDefaults}
+                  style={{
+                    height: 42, padding: "0 1rem", border: "none",
+                    borderRadius: "var(--r-md)", background: "var(--ink-800)",
+                    color: "var(--volt-500)", fontWeight: 900,
+                    cursor: isSavingRsvpDefaults ? "default" : "pointer",
+                    opacity: isSavingRsvpDefaults ? 0.6 : 1,
+                  }}
+                >
+                  {isSavingRsvpDefaults ? "Saving..." : "Save defaults"}
+                </button>
+              </form>
+            </section>
+          )}
+
+          {/* Account member management remains available through the join flow. */}
+          {false && (
+            <section style={{
+              background: "var(--surface)", border: "1px solid var(--border)",
+              borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
               animation: "pb-rise 400ms 60ms var(--ease-out) both",
+              display: "flex", flexDirection: "column",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
                 <div style={{
@@ -607,68 +982,76 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                 </div>
                 <div style={{ flex: 1 }}>
                   <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em" }}>
-                    Add Guest Player
+                    Add players
                   </h2>
                   <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginTop: "0.25rem" }}>
-                    Add a guest by name. No signup required.
+                    Add anyone by name now. Players can join later to keep stats and rankings.
                   </p>
                 </div>
               </div>
 
-              {/* Guest player form */}
-              <form onSubmit={handleAddGuestPlayer} style={{ display: "grid", gap: "0.625rem" }}>
-                  <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginBottom: "0.25rem" }}>
-                    Regular members must sign up to appear in rankings and keep their stats.
+              {false && (
+              <form onSubmit={handleAddMember} style={{ display: "grid", gap: "0.625rem", order: 2 }}>
+                <div>
+                  <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900 }}>
+                    Add existing member
+                  </h3>
+                  <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginTop: "0.2rem" }}>
+                    Use this when they already have a DuoRally account.
                   </p>
-                  <div className="pb-guest-add-form">
-                    <input
-                      data-testid="guest-name-input"
-                      className="pb-input"
-                      type="text"
-                      placeholder="Player name (e.g. John S.)"
-                      value={guestName}
-                      onChange={e => setGuestName(e.target.value)}
-                      required
-                      style={{ height: 46, borderRadius: "var(--r-md)" }}
-                    />
+                </div>
+                <div className="pb-member-add-form">
+                  <input
+                    data-testid="member-email-input"
+                    className="pb-input"
+                    type="email"
+                    placeholder="Email address"
+                    value={memberEmail}
+                    onChange={(event) => setMemberEmail(event.target.value)}
+                    required
+                    style={{ height: 46, borderRadius: "var(--r-md)" }}
+                  />
+                  {isOwner && (
                     <select
+                      data-testid="member-role-select"
                       className="pb-input"
-                      value={guestSkill}
-                      onChange={e => setGuestSkill(e.target.value)}
+                      value={newMemberRole}
+                      onChange={(event) => setNewMemberRole(event.target.value as "member" | "admin")}
                       style={{ height: 46, borderRadius: "var(--r-md)" }}
+                      aria-label="New member role"
                     >
-                      <option value="unknown">Skill: Unknown</option>
-                      <option value="beginner">Beginner</option>
-                      <option value="intermediate">Intermediate</option>
-                      <option value="advanced">Advanced</option>
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
                     </select>
-                    <button
-                      data-testid="guest-add-submit"
-                      type="submit"
-                      disabled={!guestName.trim() || isAddingGuest}
-                      style={{
-                        height: 46, padding: "0 1.25rem", border: "none",
-                        borderRadius: "var(--r-md)", background: "var(--ink-800)",
-                        color: "var(--volt-500)", fontWeight: 800,
-                        opacity: guestName.trim() && !isAddingGuest ? 1 : 0.5,
-                        cursor: guestName.trim() && !isAddingGuest ? "pointer" : "default",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {isAddingGuest ? "Adding…" : "Add Guest →"}
-                    </button>
-                  </div>
-                  {(guestAddError || guestAddSuccess) && (
-                    <p style={{
-                      borderRadius: "var(--r-md)", padding: "0.75rem",
-                      background: guestAddError ? "var(--danger-bg)" : "rgba(198,241,53,0.18)",
-                      color: guestAddError ? "var(--danger)" : "var(--ink-800)",
-                      fontWeight: 800, fontSize: "0.875rem",
-                    }}>
-                      {guestAddError ?? guestAddSuccess}
-                    </p>
                   )}
+                  <button
+                    data-testid="member-add-submit"
+                    type="submit"
+                    disabled={!memberEmail.trim() || isAddingMember}
+                    style={{
+                      height: 46, padding: "0 1.25rem", border: "none",
+                      borderRadius: "var(--r-md)", background: "var(--ink-800)",
+                      color: "var(--volt-500)", fontWeight: 800,
+                      opacity: memberEmail.trim() && !isAddingMember ? 1 : 0.5,
+                      cursor: memberEmail.trim() && !isAddingMember ? "pointer" : "default",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {isAddingMember ? "Adding..." : "Add member"}
+                  </button>
+                </div>
+                {(memberAddError || memberAddSuccess) && (
+                  <p role="status" style={{
+                    borderRadius: "var(--r-md)", padding: "0.75rem",
+                    background: memberAddError ? "var(--danger-bg)" : "rgba(198,241,53,0.18)",
+                    color: memberAddError ? "var(--danger)" : "var(--ink-800)",
+                    fontWeight: 800, fontSize: "0.875rem",
+                  }}>
+                    {memberAddError ?? memberAddSuccess}
+                  </p>
+                )}
               </form>
+              )}
 
               {/* Linked account (existing) member search form */}
               {false && selectedUser && (
@@ -782,11 +1165,11 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                     <select
                       className="pb-input"
                       value={newMemberRole}
-                      onChange={e => setNewMemberRole(e.target.value as Exclude<GroupRole, "owner">)}
+                      onChange={e => setNewMemberRole(e.target.value as "member" | "admin")}
                       style={{ height: 46, borderRadius: "var(--r-md)" }}
                     >
                       <option value="member">Member</option>
-                      <option value="organiser">Organiser</option>
+                      <option value="admin">Admin</option>
                     </select>
                     <button
                       data-testid="member-add-submit"
@@ -812,6 +1195,101 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
             </section>
           )}
 
+          </>
+          )}
+
+          {peopleView === "rankings" && (
+          <>
+          {/* Squad rankings */}
+          <section style={{ animation: "pb-rise 400ms 80ms var(--ease-out) both" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem", gap: "0.75rem" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
+                Squad Rankings
+              </span>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-3)", textAlign: "right" }}>
+                Grade settles after 3 games
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gap: "0.5rem" }}>
+              <div className="pb-squad-ranking-grid" style={{
+                padding: "0.5rem 0.75rem",
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.625rem",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "var(--text-3)",
+              }}>
+                <span>#</span>
+                <span>Player</span>
+                <span style={{ textAlign: "right" }}>Played</span>
+                <span style={{ textAlign: "right" }}>Won</span>
+                <span style={{ textAlign: "right" }}>Lost</span>
+                <span style={{ textAlign: "right" }}>Win%</span>
+                <span style={{ textAlign: "right" }}>Grade</span>
+              </div>
+
+              {squadRankingRows.length === 0 ? (
+                <div style={{
+                  background: "var(--surface)",
+                  border: "2px dashed var(--border)",
+                  borderRadius: "var(--r-xl)",
+                  padding: "1.5rem 1rem",
+                  textAlign: "center",
+                }}>
+                  <p style={{ color: "var(--text-2)" }}>Squad rankings start after the first recorded result.</p>
+                </div>
+              ) : (
+                squadRankingRows.map((row, index) => (
+                  <div key={row.id} className="pb-squad-ranking-grid" style={{
+                    alignItems: "center",
+                    padding: "0.75rem",
+                    borderRadius: "var(--r-xl)",
+                    border: "1px solid var(--border)",
+                    background: index === 0 ? "rgba(198,241,53,0.09)" : "var(--surface)",
+                    boxShadow: index < 3 ? "var(--shadow-xs)" : "none",
+                    animation: `pb-rise 400ms ${100 + index * 25}ms var(--ease-out) both`,
+                  }}>
+                    <span style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: "50%",
+                      background: index === 0 ? "var(--volt-500)" : "var(--surface-sunken)",
+                      color: index === 0 ? "var(--ink-800)" : "var(--text-2)",
+                      display: "grid",
+                      placeItems: "center",
+                      fontFamily: "var(--font-display-tight)",
+                      fontWeight: 900,
+                      fontSize: "0.8125rem",
+                    }}>
+                      {index + 1}
+                    </span>
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 900, color: "var(--text-1)" }}>
+                      {row.displayName}
+                    </span>
+                    <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--text-1)", fontWeight: 800 }}>{row.played}</span>
+                    <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--volt-600)", fontWeight: 900 }}>{row.wins}</span>
+                    <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>{row.losses}</span>
+                    <span style={{ textAlign: "right", fontFamily: "var(--font-mono)", color: row.winPct >= 50 ? "var(--volt-600)" : "var(--text-2)", fontWeight: 800 }}>{row.winPct}%</span>
+                    <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2, minWidth: 0 }}>
+                      <strong style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", color: "var(--ink-800)" }}>{row.grade}</strong>
+                      {row.provisional && (
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.5625rem", color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                          Provisional
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+
+          </>
+          )}
+
+          {peopleView === "manage" && (
+          <>
           {/* Members list */}
           <section style={{ animation: "pb-rise 400ms 90ms var(--ease-out) both" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.625rem" }}>
@@ -842,9 +1320,26 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                 {players.map((p, i) => {
                   const initial = p.displayName?.[0]?.toUpperCase() ?? "?";
                   const memberRole = p.userId ? roleByUserId.get(p.userId) : undefined;
-                  const roleStyle = memberRole ? (ROLE_STYLE[memberRole] ?? ROLE_STYLE.member) : null;
+                  const normalizedRole = normalizeGroupRole(memberRole ?? null);
+                  const canMakeOwner = Boolean(
+                    isOwner
+                    && p.userId
+                    && p.userId !== user?.uid
+                    && memberRole
+                    && memberRole !== "owner",
+                  );
+                  const canRemove = p.isGuest
+                    ? canAdminister
+                    : Boolean(memberRole && canRemoveGroupMember(role, memberRole));
+                  const currentKind = p.playerKind ?? (p.isGuest ? "casual" : "regular");
+                  const roleSelectValue = normalizedRole === "owner"
+                    ? "owner"
+                    : normalizedRole === "admin"
+                      ? "admin"
+                      : "member";
+                  const roleSelectBusy = roleChangingId === p.userId || ownershipChangingId === p.userId;
                   return (
-                    <div key={p.id} data-testid="member-list-item" style={{
+                    <div key={p.id} data-testid="member-list-item" className="pb-member-row" style={{
                       display: "grid",
                       gridTemplateColumns: "auto minmax(0, 1fr) auto",
                       alignItems: "center", gap: "0.75rem",
@@ -864,47 +1359,115 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                         <div style={{ fontWeight: 800, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {p.displayName}
                         </div>
-                        <div style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>{p.email ?? "No email"}</div>
+                        <div style={{ color: "var(--text-3)", fontSize: "0.8125rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {p.email ?? "No email"}
+                          {p.skillLevel && p.skillLevel !== "unknown" ? ` · ${p.skillLevel}` : ""}
+                        </div>
                       </div>
-                      <div style={{ display: "flex", gap: "0.375rem", alignItems: "center", flexShrink: 0 }}>
-                        {p.isGuest && (
-                          <span style={{
-                            padding: "3px 8px", borderRadius: "var(--r-pill)",
-                            background: "rgba(198,241,53,0.15)", color: "var(--ink-800)",
-                            border: "1px solid var(--volt-500)",
-                            fontSize: "0.6875rem", fontWeight: 800, letterSpacing: "0.05em",
-                            textTransform: "uppercase",
-                          }}>
-                            Guest
-                          </span>
+                      <div className="pb-member-actions" style={{ display: "flex", gap: "0.625rem", alignItems: "end", justifyContent: "flex-end", flexWrap: "wrap", flexShrink: 0 }}>
+                        {canAdminister && (
+                          <label style={{ display: "grid", gap: "0.25rem", minWidth: 126 }}>
+                            <span style={{
+                              fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
+                              letterSpacing: "0.08em", textTransform: "uppercase",
+                              color: "var(--text-3)", fontWeight: 900,
+                            }}>
+                              Player type
+                            </span>
+                            <select
+                              value={currentKind}
+                              disabled={playerKindChangingId === p.id}
+                              onChange={(event) => void handlePlayerKindChange(
+                                p.id,
+                                p.displayName,
+                                event.target.value as SquadPlayerKind,
+                              )}
+                              aria-label={`${p.displayName} player type`}
+                              style={{
+                                height: 38, minWidth: 126, padding: "0 0.75rem",
+                                border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+                                background: "var(--surface-sunken)", color: "var(--text-1)",
+                                fontSize: "0.8125rem", fontWeight: 900,
+                                cursor: playerKindChangingId === p.id ? "default" : "pointer",
+                                opacity: playerKindChangingId === p.id ? 0.58 : 1,
+                              }}
+                            >
+                              <option value="regular">Regular</option>
+                              <option value="casual">Casual</option>
+                            </select>
+                          </label>
                         )}
-                        {p.skillLevel && p.skillLevel !== "unknown" && (
-                          <span style={{
-                            padding: "3px 8px", borderRadius: "var(--r-pill)",
-                            background: "var(--surface-sunken)", color: "var(--text-2)",
-                            fontSize: "0.75rem", fontWeight: 700,
-                          }}>
-                            {p.skillLevel}
-                          </span>
+                        {memberRole ? (
+                          <label style={{ display: "grid", gap: "0.25rem", minWidth: 126 }}>
+                            <span style={{
+                              fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
+                              letterSpacing: "0.08em", textTransform: "uppercase",
+                              color: "var(--text-3)", fontWeight: 900,
+                            }}>
+                              Squad role
+                            </span>
+                            <select
+                              data-testid={p.userId ? `member-role-${p.userId}` : undefined}
+                              value={roleSelectValue}
+                              disabled={!isOwner || memberRole === "owner" || roleSelectBusy}
+                              onChange={(event) => {
+                                if (!p.userId) return;
+                                void handleMemberRoleSelect(
+                                  p.userId,
+                                  p.displayName,
+                                  memberRole,
+                                  event.target.value as "member" | "admin" | "owner",
+                                );
+                              }}
+                              aria-label={`${p.displayName} squad role`}
+                              style={{
+                                height: 38, minWidth: 126, padding: "0 0.75rem",
+                                border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+                                background: "var(--surface-sunken)", color: "var(--text-1)",
+                                fontSize: "0.8125rem", fontWeight: 900,
+                                cursor: !isOwner || memberRole === "owner" || roleSelectBusy ? "default" : "pointer",
+                                opacity: roleSelectBusy ? 0.58 : 1,
+                              }}
+                            >
+                              <option value="member">Member</option>
+                              <option value="admin">Admin</option>
+                              {(roleSelectValue === "owner" || canMakeOwner) && (
+                                <option value="owner">Owner</option>
+                              )}
+                            </select>
+                          </label>
+                        ) : (
+                          <label style={{ display: "grid", gap: "0.25rem", minWidth: 126 }}>
+                            <span style={{
+                              fontFamily: "var(--font-mono)", fontSize: "0.5625rem",
+                              letterSpacing: "0.08em", textTransform: "uppercase",
+                              color: "var(--text-3)", fontWeight: 900,
+                            }}>
+                              Squad role
+                            </span>
+                            <select
+                              value="guest"
+                              disabled
+                              aria-label={`${p.displayName} squad role`}
+                              style={{
+                                height: 38, minWidth: 126, padding: "0 0.75rem",
+                                border: "1px solid var(--border)", borderRadius: "var(--r-md)",
+                                background: "var(--surface-sunken)", color: "var(--text-2)",
+                                fontSize: "0.8125rem", fontWeight: 900,
+                              }}
+                            >
+                              <option value="guest">Guest</option>
+                            </select>
+                          </label>
                         )}
-                        {roleStyle && memberRole && (
-                          <span style={{
-                            padding: "3px 8px", borderRadius: "var(--r-pill)",
-                            background: roleStyle.bg, color: roleStyle.color,
-                            fontSize: "0.75rem", fontWeight: 800,
-                            textTransform: "capitalize",
-                          }}>
-                            {memberRole}
-                          </span>
-                        )}
-                        {canManageGroup(role) && memberRole !== "owner" && (
+                        {canRemove && (
                           <button
                             type="button"
                             onClick={() => handleRemovePlayer(p.id, p.displayName)}
                             style={{
-                              height: 30, padding: "0 0.5rem", border: "1px solid var(--border)",
+                              height: 38, padding: "0 0.5rem", border: "none",
                               borderRadius: "var(--r-md)", background: "transparent",
-                              color: "var(--danger)", fontSize: "0.6875rem", fontWeight: 800,
+                              color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 900,
                               cursor: "pointer",
                             }}
                           >
@@ -1017,6 +1580,41 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               )}
             </section>
           )}
+
+          <section style={{
+            borderTop: "1px solid var(--border)", padding: "1rem 0 0.25rem",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            gap: "1rem", flexWrap: "wrap",
+          }}>
+            <div>
+              <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900 }}>
+                Leave this squad
+              </h2>
+              <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginTop: "0.2rem", maxWidth: 560 }}>
+                {isOwner
+                  ? "Transfer ownership to another member from their Squad role dropdown. You can leave after you become an admin."
+                  : "Your completed results and rankings will remain in the squad history."}
+              </p>
+            </div>
+            {canLeaveGroup(role) && (
+              <button
+                type="button"
+                onClick={handleLeaveSquad}
+                disabled={isLeaving}
+                style={{
+                  height: 42, padding: "0 1rem", border: "1px solid var(--danger)",
+                  borderRadius: "var(--r-md)", background: "transparent",
+                  color: "var(--danger)", fontWeight: 900,
+                  cursor: isLeaving ? "default" : "pointer",
+                  opacity: isLeaving ? 0.55 : 1,
+                }}
+              >
+                {isLeaving ? "Leaving..." : "Leave squad"}
+              </button>
+            )}
+          </section>
+          </>
+          )}
         </>
       )}
 
@@ -1038,7 +1636,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                   fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", cursor: "pointer",
                 }}
               >
-                {f === "upcoming" ? `Upcoming (${sessions.filter(s => s.status === "scheduled" || s.status === "draft").length})` : f === "all" ? "All Sessions" : f === "active" ? "Live" : "Past"}
+                {f === "upcoming" ? `Upcoming (${sessions.filter(s => s.status === "scheduled" || s.status === "draft").length})` : f === "all" ? "All sessions" : f === "active" ? "Playing now" : "Finished"}
               </button>
             ))}
           </div>
@@ -1053,8 +1651,19 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
             if (filtered.length === 0) {
               return (
-                <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem", textAlign: "center", color: "var(--text-2)" }}>
-                  No {sessionFilter === "all" ? "" : sessionFilter} sessions found.
+                <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem 1.25rem", textAlign: "center", color: "var(--text-2)", display: "grid", justifyItems: "center", gap: "0.875rem" }}>
+                  <span>No {sessionFilter === "all" ? "" : sessionFilter} sessions found.</span>
+                  <Link
+                    href={`/sessions/new?groupId=${encodeURIComponent(groupId)}`}
+                    style={{
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      minHeight: 44, padding: "0 1.25rem", borderRadius: "var(--r-pill)",
+                      background: "var(--volt-500)", color: "var(--ink-800)",
+                      fontWeight: 900, textDecoration: "none", boxShadow: "var(--shadow-volt)",
+                    }}
+                  >
+                    Create session
+                  </Link>
                 </div>
               );
             }
@@ -1100,7 +1709,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                                 background: "rgba(198,241,53,0.15)", color: "var(--ink-800)",
                                 fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 800,
                               }}>
-                                👍 {goingCount} Going · 👎 {notGoingCount} Not Going
+                                {goingCount} in · {notGoingCount} away
                               </span>
                             )}
                           </div>
@@ -1119,7 +1728,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                             textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
                           }}
                         >
-                          {s.status === "active" ? "Live Console" : "View Session"}
+                          {s.status === "active" || s.status === "paused" ? "Run Session" : s.status === "completed" ? "View Results" : "Start Playing"}
                         </a>
                       </div>
 
@@ -1127,7 +1736,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                       {isUpcoming && (
                         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", paddingTop: "0.5rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-3)" }}>
-                            RSVP:
+                            {currentUserPlayerKind === "casual" ? "Casual interest:" : "You're in by default:"}
                           </span>
                           <button
                             type="button"
@@ -1139,7 +1748,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                               cursor: "pointer",
                             }}
                           >
-                            👍 I'm Playing
+                            {currentUserPlayerKind === "casual" ? "I'm interested" : "I'm in"}
                           </button>
                           <button
                             type="button"
@@ -1151,7 +1760,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                               cursor: "pointer",
                             }}
                           >
-                            👎 Not Playing
+                            {currentUserPlayerKind === "casual" ? "Not interested" : "I'm away"}
                           </button>
                           {canManageGroup(role) && (
                             <button
@@ -1177,6 +1786,8 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
           })()}
         </section>
       )}
+      {confirmationDialog}
+      <Toast toast={toast} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -28,6 +28,14 @@ export interface Session {
   joinEnabled: boolean;
   scoreCode: string;
   scoreLinkEnabled: boolean;
+  rsvpCode?: string;
+  rsvpEnabled?: boolean;
+  rsvpCapacity?: {
+    totalPlayers: number;
+    casualConfirmedSlots: number;
+    waitlistEnabled: boolean;
+    cutoffAt?: unknown | null;
+  };
   /** Read-only public player board (see-your-matches). Absent = enabled (legacy sessions). */
   boardEnabled?: boolean;
 }

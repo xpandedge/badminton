@@ -1,11 +1,11 @@
 import type { SessionStatus, SessionPlayerStatus } from "@picklebaddies/domain";
 
 const SESSION_STATUS_CONFIG: Record<SessionStatus, { icon: string; label: string; color: string }> = {
-  draft:     { icon: "✏️", label: "Draft",     color: "bg-gray-100 text-gray-700" },
-  scheduled: { icon: "📅", label: "Scheduled", color: "bg-blue-100 text-blue-700" },
-  active:    { icon: "▶️", label: "Active",    color: "bg-green-100 text-green-700" },
+  draft:     { icon: "✏️", label: "Not started", color: "bg-gray-100 text-gray-700" },
+  scheduled: { icon: "📅", label: "Upcoming",    color: "bg-blue-100 text-blue-700" },
+  active:    { icon: "▶️", label: "Playing now", color: "bg-green-100 text-green-700" },
   paused:    { icon: "⏸️", label: "Paused",    color: "bg-yellow-100 text-yellow-700" },
-  completed: { icon: "✅", label: "Completed", color: "bg-purple-100 text-purple-700" },
+  completed: { icon: "✅", label: "Finished",  color: "bg-purple-100 text-purple-700" },
   cancelled: { icon: "✖️", label: "Cancelled", color: "bg-red-100 text-red-700" },
 };
 
@@ -13,8 +13,8 @@ const PLAYER_STATUS_CONFIG: Record<SessionPlayerStatus, { icon: string; label: s
   invited:    { icon: "📨", label: "Invited",     color: "bg-gray-100 text-gray-600" },
   registered: { icon: "📋", label: "Registered",  color: "bg-blue-100 text-blue-600" },
   checked_in: { icon: "✔️", label: "Checked in",  color: "bg-teal-100 text-teal-700" },
-  active:     { icon: "▶️", label: "Active",      color: "bg-green-100 text-green-700" },
-  waiting:    { icon: "⏳", label: "Waiting",     color: "bg-yellow-100 text-yellow-700" },
+  active:     { icon: "▶️", label: "Playing",     color: "bg-green-100 text-green-700" },
+  waiting:    { icon: "⏳", label: "Stepped out", color: "bg-yellow-100 text-yellow-700" },
   left:       { icon: "🚶", label: "Left",        color: "bg-orange-100 text-orange-700" },
   removed:    { icon: "✖️", label: "Removed",     color: "bg-red-100 text-red-700" },
   no_show:    { icon: "❓", label: "No show",     color: "bg-red-100 text-red-600" },

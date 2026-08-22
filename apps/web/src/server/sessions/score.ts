@@ -6,6 +6,7 @@ import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 import { validatePayload, readAutoFillInputs, writeAutoFill } from "./scheduling";
+import { applySquadRatingForMatch } from "./squad-rating";
 
 export interface SubmitScoreInput {
   sessionId: string;
@@ -66,6 +67,17 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         Promise.all(lbRefs.map((r) => t.get(r))),
         Promise.all(globalRefs.map((r) => t.get(r))),
       ]);
+
+      // Squad ratings are append-only for first submission in v1; edit replay is a later integrity task.
+      if (!isEdit && teamAIds.length === 2 && teamBIds.length === 2) {
+        await applySquadRatingForMatch(t, db, {
+          groupId: String(session.groupId),
+          teamAIds: [teamAIds[0]!, teamAIds[1]!],
+          teamBIds: [teamBIds[0]!, teamBIds[1]!],
+          winnerTeam,
+          payload,
+        });
+      }
 
       // ── THEN ALL WRITES ──
       const priorWinner: "A" | "B" | undefined = match.winnerTeam;

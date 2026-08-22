@@ -6,8 +6,9 @@ rules_version = '2';
 //
 // Role tiers (groups/{id}/members.role):
 //   owner     - full control
-//   organiser - can create/update sessions, manage players/venues
-//   member    - read-only on group content; scoring/generate/rebalance go via server actions (admin SDK)
+//   admin     - can manage groups and sessions
+//   organiser - legacy admin value, retained for compatibility
+//   member    - can view, RSVP, and score
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -63,7 +64,8 @@ service cloud.firestore {
       }
       function isOwner() { return isMember() && memberRole() == "owner"; }
       // organiser-level: owner or organiser role (PRD §19 three-tier model preserved for direct writes).
-      function isOrganiser() { return isMember() && memberRole() in ["owner", "organiser"]; }
+      function isAdmin() { return isMember() && memberRole() in ["owner", "admin", "organiser"]; }
+      function isNonOwnerAdmin() { return isMember() && memberRole() in ["admin", "organiser"]; }
       function isGroupCreator() {
         return get(/databases/$(database)/documents/groups/$(groupId)).data.createdBy == request.auth.uid;
       }
@@ -78,30 +80,34 @@ service cloud.firestore {
         // Owner can write non-owner member docs. Bootstrap: group creator may write their own first (owner) doc.
         allow create: if isSuperAdmin()
           || (isOwner() && request.resource.data.get('role', '') != "owner")
+          || (isNonOwnerAdmin() && request.resource.data.get('role', '') == "member")
           || (isGroupCreator() && memberId == request.auth.uid);
         allow update: if isSuperAdmin()
-          || (isOwner() && request.resource.data.get('role', '') != "owner");
-        allow delete: if isSuperAdmin() || (isOwner() && resource.data.get('role', '') != "owner");
+          || (isOwner() && resource.data.get('role', '') != "owner" && request.resource.data.get('role', '') != "owner")
+          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member" && request.resource.data.get('role', '') == "member");
+        allow delete: if isSuperAdmin()
+          || (isOwner() && resource.data.get('role', '') != "owner")
+          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member");
       }
 
       match /players/{playerId} {
         allow read: if isSuperAdmin() || isMember();
-        allow write: if isSuperAdmin() || isOrganiser(); // organiser+ manages group player roster
+        allow write: if isSuperAdmin() || isAdmin();
       }
 
       // Self-join requests: any member can see pending requests; all writes
       // (create/approve/reject) go through server actions (admin SDK).
       match /joinRequests/{reqId} {
-        allow read: if isSuperAdmin() || isMember();
+        allow read: if isSuperAdmin() || isAdmin();
         allow write: if false;
       }
 
       match /venues/{venueId} {
         allow read: if isSuperAdmin() || isMember();
-        allow write: if isSuperAdmin() || isOrganiser();
+        allow write: if isSuperAdmin() || isAdmin();
         match /courts/{courtId} {
           allow read: if isSuperAdmin() || isMember();
-          allow write: if isSuperAdmin() || isOrganiser();
+          allow write: if isSuperAdmin() || isAdmin();
         }
       }
     }
@@ -120,28 +126,28 @@ service cloud.firestore {
         return request.auth != null &&
           exists(/databases/$(database)/documents/groups/$(getSessionGroupId())/members/$(request.auth.uid));
       }
-      // organiser+ within the session's group (owner or organiser role).
-      function isSessionGroupOrganiser() {
+      // Owner/admin-level access, including legacy organiser records.
+      function isSessionGroupAdmin() {
         return isSessionGroupMember() &&
-          sessionMemberRole(getSessionGroupId()) in ["owner", "organiser"];
+          sessionMemberRole(getSessionGroupId()) in ["owner", "admin", "organiser"];
       }
-      // organiser+ check for session create (uses request.resource.data.groupId).
-      function isCreateSessionGroupOrganiser() {
+      function isCreateSessionGroupAdmin() {
         return request.auth != null &&
           exists(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)).data.get('role', '') in ["owner", "organiser"];
+          get(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)).data.get('role', '') in ["owner", "admin", "organiser"];
       }
       function isSessionPlayer() {
         return request.auth != null &&
           exists(/databases/$(database)/documents/sessions/$(sessionId)/players/$(request.auth.uid));
       }
 
-      // Any signed-in user may read sessions (squad feeds, join codes, public
-      // board). Writes stay organiser-only — all real mutations go through
-      // admin-SDK server actions, so clients never need create/update here.
-      allow read: if signedIn();
-      allow create: if isCreateSessionGroupOrganiser();
-      allow update: if isSessionGroupOrganiser();
+      // Direct client reads are limited to the session's group members and its
+      // own players. Public surfaces (board code, score link, RSVP link) read
+      // via admin-SDK server actions, so they do not need a client read grant.
+      // Writes stay admin-only — all real mutations go through server actions.
+      allow read: if isSessionGroupMember() || isSessionPlayer();
+      allow create: if isCreateSessionGroupAdmin();
+      allow update: if isSessionGroupAdmin();
 
       match /players/{playerId} {
         allow read: if isSessionGroupMember() || request.auth.uid == playerId;
@@ -150,7 +156,7 @@ service cloud.firestore {
 
       // Only organiser+ may read/update join requests; create is server-only (D6).
       match /joinRequests/{reqId} {
-        allow read, update: if isSessionGroupOrganiser();
+        allow read, update: if isSessionGroupAdmin();
         allow create: if false; // Server tier only (D6)
       }
 

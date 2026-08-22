@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
+import { LegalLinks } from "@/components/LegalLinks";
 
 type GuideRole = "organiser" | "player";
 
@@ -27,27 +28,33 @@ const ORGANISER_SECTIONS: GuideSection[] = [
     id: "squad-setup",
     label: "Setup",
     title: "Build your squad",
-    summary: "Create the group, add players, invite members, and prepare courts before session day.",
+    summary: "Create the shared space for your players, venues, and sessions.",
     tone: "lime",
     icon: "squad",
     steps: [
       {
         title: "Create a squad",
-        body: "Go to Groups, use Create Squad, enter a name and optional description, then submit. The creator becomes the squad owner.",
-        action: "Groups -> Create Squad",
+        body: "Open Squads, tap Create Squad, and give it a name. You become the owner and can appoint other admins.",
+        action: "Squads -> Create Squad",
       },
       {
-        title: "Invite signed-in members",
-        body: "Open the squad, copy the invite code, and share it with players. Review join requests from the squad page.",
-        action: "Squad -> Invite code",
+        title: "Share the invite",
+        body: "Open the squad and use Share invite, WhatsApp, or Copy. A player using the invite code joins immediately; a player searching by name sends a request for approval.",
+        action: "Squad -> Share invite",
       },
       {
-        title: "Add guest players",
-        body: "Use guests for one-off players or fill-ins who do not need an account. They can still be scheduled and scored.",
+        title: "Share admin access",
+        body: "Make another trusted player an admin if they help run nights. Admins can manage players, venues, and sessions.",
+        action: "Squad -> Members -> Make admin",
+      },
+      {
+        title: "Hand over a squad",
+        body: "The owner can use Make owner beside another registered member. The previous owner becomes an admin and can leave if needed.",
+        action: "Squad -> Members -> Make owner",
       },
       {
         title: "Add venues and courts",
-        body: "Add the venue and each available court so DuoRally can build court assignments correctly.",
+        body: "Save the venues and courts your squad uses. Choose the courts that are available when you create each session.",
       },
     ],
   },
@@ -55,26 +62,34 @@ const ORGANISER_SECTIONS: GuideSection[] = [
     id: "schedule-session",
     label: "Schedule",
     title: "Create a session",
-    summary: "Pick the squad, sport, scoring mode, venue, courts, duration, and start time.",
+    summary: "Create the event your squad will RSVP to and play from.",
     tone: "blue",
     icon: "calendar",
     steps: [
       {
-        title: "Start from the dashboard",
-        body: "Tap Start a session or the Session button in the bottom navigation.",
-        action: "Dashboard -> Start a session",
+        title: "Create the session",
+        body: "Use the Session button in the bottom navigation. You can also create one from a squad when its Sessions tab is empty.",
+        action: "Session + -> Create Session",
       },
       {
         title: "Choose the session settings",
-        body: "Select badminton or pickleball, scoring mode, session duration, estimated game length, venue, and courts.",
+        body: "Choose the sport, scoring style, session length, game length, venue, and courts.",
       },
       {
         title: "Schedule or start now",
-        body: "Set a date and time for a future session. Leave it blank when you want to start immediately.",
+        body: "Add a date and time if it is later. Leave it blank if you are about to start.",
       },
       {
         title: "Use RSVP for planning",
-        body: "Scheduled sessions appear for members so they can mark Going or Not Going before play starts.",
+        body: "Players choose Going or Not going from Home. Going adds that player to the session roster automatically.",
+      },
+      {
+        title: "Build the player list",
+        body: "Use Add all when most squad members are playing, then remove anyone who is absent. You can also add members one at a time.",
+      },
+      {
+        title: "Add a session guest",
+        body: "Add a guest by name for a one-off player. They appear in this session and its ranking, but not in overall rankings.",
       },
     ],
   },
@@ -82,26 +97,30 @@ const ORGANISER_SECTIONS: GuideSection[] = [
     id: "live-console",
     label: "Live",
     title: "Run the courts",
-    summary: "Generate matches, see every court, manage player changes, and keep play moving.",
+    summary: "Start games, handle changes, and keep people moving on and off court.",
     tone: "ink",
     icon: "court",
     steps: [
       {
-        title: "Open the Live Console",
-        body: "Open the session and use Live Console. Start Session generates the first court assignments.",
-        action: "Session -> Live Console",
+        title: "Start playing",
+        body: "Open the session and tap Start Playing. The first games appear on the courts.",
+        action: "Session -> Start Playing",
       },
       {
-        title: "Re-pick when plans change",
-        body: "Use Re-pick Current Matches after late arrivals, early departures, court changes, or manual roster edits.",
+        title: "Treat displayed games as current",
+        body: "Each court card is the game being played now. Current games and completed scores stay in place when the roster or courts change.",
       },
       {
-        title: "Protect completed games",
-        body: "Completed matches stay locked during re-picks, so scores and past results are preserved.",
+        title: "Swap one player when needed",
+        body: "Use Swap with on a current court to replace a player in that game only. Later games rebalance around who actually played.",
       },
       {
-        title: "Update player status",
-        body: "Mark players as Active, Waiting, Left, or Removed, then re-pick to rebalance future assignments.",
+        title: "Handle players leaving or returning",
+        body: "Use Injured / Step Out to stop assigning more games, Re-activate if they return, or Remove to take them out of the session roster.",
+      },
+      {
+        title: "Change court availability",
+        body: "Disable a court if it is no longer available. Current games stay put and later games use the remaining courts.",
       },
     ],
   },
@@ -109,25 +128,25 @@ const ORGANISER_SECTIONS: GuideSection[] = [
     id: "scores-rankings",
     label: "Scores",
     title: "Record results",
-    summary: "Enter winners or exact scores and let DuoRally update the leaderboard automatically.",
+    summary: "Save each result as games finish so the table stays current.",
     tone: "gold",
     icon: "score",
     steps: [
       {
         title: "Winner-only scoring",
-        body: "Tap A Wins or B Wins under the court card when you only need the match winner.",
+        body: "Check the current court card, then tap A Wins or B Wins. Wait for the next game to load before scoring that court again.",
       },
       {
         title: "Points scoring",
-        body: "Enter Team A and Team B scores, save the result, and DuoRally calculates the winner.",
+        body: "Enter both team scores when you want point totals recorded. The higher score determines the winner.",
       },
       {
-        title: "Share a scorekeeping link",
-        body: "Use the scorekeeping link when a court volunteer should enter scores without full organiser controls.",
+        title: "Share the session views",
+        body: "Show Board gives players the live courts and session ranking. Share the Score Entry Link only with people who should submit results.",
       },
       {
         title: "Complete the session",
-        body: "When play is finished, complete the session so final stats and rankings are clean.",
+        body: "When the last games are done, complete the session so rankings and stats are final.",
       },
     ],
   },
@@ -135,25 +154,49 @@ const ORGANISER_SECTIONS: GuideSection[] = [
 
 const PLAYER_SECTIONS: GuideSection[] = [
   {
+    id: "player-account",
+    label: "Account",
+    title: "Set up your player name",
+    summary: "Sign in and choose the name other players know you by.",
+    tone: "blue",
+    icon: "player",
+    steps: [
+      {
+        title: "Join DuoRally",
+        body: "Continue with Google or create an account with your email, password, and player name. Existing email/password accounts can still use Forgot password.",
+      },
+      {
+        title: "Choose your player name",
+        body: "Tap your initials in the top-right corner and answer What should players call you? This updates your name across your squads and sessions.",
+        action: "Initials -> Your player name",
+      },
+    ],
+  },
+  {
     id: "join-squad",
     label: "Join",
     title: "Join your squad",
-    summary: "Use an invite code or search for the squad name, then wait for organiser approval if needed.",
+    summary: "Use the code from your organiser or request to join by squad name.",
     tone: "lime",
     icon: "join",
     steps: [
       {
         title: "Use an invite code",
-        body: "Go to Groups, enter the code from your organiser, and submit.",
-        action: "Groups -> Join a squad",
+        body: "On Home, enter the code from your organiser to join the squad immediately.",
+        action: "Home -> Join squad",
       },
       {
         title: "Search by squad name",
-        body: "If you do not have a code, search for the squad and tap Request.",
+        body: "If you do not have a code, search from Home and tap Request to join.",
       },
       {
         title: "Wait for approval",
-        body: "Some squads require the organiser to approve your request before the squad appears in your list.",
+        body: "If the organiser needs to approve you, the squad will appear after they accept the request.",
+      },
+      {
+        title: "Leave a squad",
+        body: "Open the squad's Members tab and use Leave squad at the bottom. You will lose access to upcoming sessions, while completed results and rankings stay.",
+        action: "Squad -> Members -> Leave squad",
       },
     ],
   },
@@ -161,21 +204,21 @@ const PLAYER_SECTIONS: GuideSection[] = [
     id: "rsvp",
     label: "RSVP",
     title: "Tell the organiser you are coming",
-    summary: "Mark Going or Not Going so the organiser can plan the session before play starts.",
+    summary: "Let the organiser know before they build the games.",
     tone: "blue",
     icon: "calendar",
     steps: [
       {
-        title: "Open the squad session list",
-        body: "Open your squad and find the upcoming session.",
+        title: "Find the session on Home",
+        body: "Home shows sessions from your squads, with a live or next session highlighted at the top.",
       },
       {
         title: "Choose Going or Not Going",
-        body: "You can usually change your RSVP before the session starts.",
+        body: "Tap Going to add yourself to the session automatically, or Not going if you cannot attend. You can change it until play starts.",
       },
       {
         title: "Show up late?",
-        body: "Tell the organiser. They can add you and re-pick future matches.",
+        body: "Tell the organiser when you arrive. They can add or re-activate you without changing games already on court.",
       },
     ],
   },
@@ -183,22 +226,22 @@ const PLAYER_SECTIONS: GuideSection[] = [
     id: "player-view",
     label: "Play",
     title: "Find your court",
-    summary: "Check your current assignment, partner, opponents, waiting status, and finished results.",
+    summary: "See where you are playing, who you are with, and when you are waiting.",
     tone: "ink",
     icon: "player",
     steps: [
       {
-        title: "Open Joined sessions",
-        body: "From the dashboard, use the Joined tab to open sessions where you are playing.",
-        action: "Dashboard -> Joined",
+        title: "Open the highlighted session",
+        body: "Use the live or next-session card on Home, or open the session from its squad.",
+        action: "Home -> Open session",
       },
       {
         title: "Check your current match",
-        body: "Your player view shows your court, partner, opponents, or whether you are waiting.",
+        body: "Your player view shows your court, partner, opponents, or that you are waiting.",
       },
       {
-        title: "Refresh by staying on the page",
-        body: "Assignments can change after a re-pick, so keep the session open during play.",
+        title: "Use the Player Board",
+        body: "Open the organiser's shared board link or QR code to follow current courts, the bench, upcoming games, and the session ranking.",
       },
     ],
   },
@@ -206,21 +249,21 @@ const PLAYER_SECTIONS: GuideSection[] = [
     id: "follow-results",
     label: "Results",
     title: "Follow scores and rankings",
-    summary: "Watch the leaderboard update as matches finish, then check overall rankings later.",
+    summary: "Watch the session table change as results come in.",
     tone: "gold",
     icon: "rank",
     steps: [
       {
         title: "Follow the live leaderboard",
-        body: "The session leaderboard updates as organisers or scorekeepers enter results.",
+        body: "The session ranking updates as organisers or scorekeepers enter results. Session-only guests appear here too.",
       },
       {
         title: "Use the board link",
-        body: "If the organiser shares a board link, open it for a quick court and scoreboard view.",
+        body: "If the organiser shares a board link, open it to see courts and scores without signing in.",
       },
       {
         title: "Check all-time rankings",
-        body: "Tap Rankings from the dashboard to see completed-session stats.",
+        body: "Tap Rankings from Home to see overall results for registered players across completed sessions. Session-only guests are not included.",
       },
     ],
   },
@@ -229,36 +272,37 @@ const PLAYER_SECTIONS: GuideSection[] = [
 const QUICK_START: Record<GuideRole, string[]> = {
   organiser: [
     "Create or open a squad.",
-    "Add players, guests, venues, and courts.",
-    "Create a session and let members RSVP.",
-    "Start Session from the Live Console.",
-    "Enter scores and re-pick when the player list changes.",
+    "Share the invite and save your venues and courts.",
+    "Create a session and let players RSVP from Home.",
+    "Use Add all, remove absences, and add any session guests.",
+    "Tap Start Playing from the session.",
+    "Enter each result and let DuoRally prepare the next game.",
   ],
   player: [
-    "Join your squad from Groups.",
-    "RSVP to upcoming sessions.",
-    "Open Joined sessions from the dashboard.",
+    "Join your squad from Home.",
+    "Choose Going or Not going on the session card.",
+    "Open the highlighted live or next session.",
     "Check your court, partner, and opponents.",
-    "Follow scores and rankings as games finish.",
+    "Follow the Player Board and session ranking.",
   ],
 };
 
 const TROUBLESHOOTING = [
   {
     title: "Matches will not generate",
-    body: "Check that the session has at least four active players and at least one active court.",
+    body: "Check that at least four players are in and at least one court is available.",
   },
   {
     title: "A player is missing",
-    body: "Add them from the squad roster or as a guest, then re-pick future matches.",
+    body: "Use Add all, add the squad member individually, or add a session-only guest by name.",
   },
   {
-    title: "Someone left early",
-    body: "Mark the player as Left or Removed, then re-pick. Completed results stay preserved.",
+    title: "Someone needs to step out",
+    body: "Tap Injured / Step Out so they are not assigned more games. Use Re-activate if they return.",
   },
   {
-    title: "Scores look wrong",
-    body: "Ask an organiser to review the match before entering more results.",
+    title: "The current lineup changed",
+    body: "Use Swap with on that court. Only the selected current game changes; later games rebalance around the actual players.",
   },
 ];
 
@@ -663,7 +707,7 @@ export default function HelpPage() {
                   maxWidth: 620,
                 }}
               >
-                Run the rally without the chaos.
+                Run fair games with less admin.
               </h1>
               <p
                 style={{
@@ -674,7 +718,7 @@ export default function HelpPage() {
                   lineHeight: 1.6,
                 }}
               >
-                A practical guide for organisers and players using DuoRally for badminton and pickleball doubles sessions.
+                Use this when you are setting up a squad, starting play, finding your court, or fixing a change mid-session.
               </p>
             </div>
 
@@ -702,7 +746,7 @@ export default function HelpPage() {
               </p>
               <div style={{ display: "grid", gap: "0.5rem" }}>
                 <Link href="/groups" className="pb-btn pb-btn-volt" style={{ height: 44 }}>
-                  Open groups
+                  Open squads
                 </Link>
                 <Link
                   href="/sessions/new"
@@ -889,10 +933,10 @@ export default function HelpPage() {
                   marginBottom: "0.5rem",
                 }}
               >
-                Session rule
+                When plans change
               </p>
               <p style={{ color: "rgba(246,248,244,0.72)", fontSize: "0.875rem", lineHeight: 1.55 }}>
-                Re-picking should help future games only. Entered scores and completed matches should stay preserved.
+                Current games stay put. Player and court changes are applied to the games that follow.
               </p>
             </div>
           </aside>
@@ -952,7 +996,7 @@ export default function HelpPage() {
                   whiteSpace: "nowrap",
                 }}
               >
-                Dashboard
+                Home
               </Link>
             </div>
 
@@ -1049,6 +1093,10 @@ export default function HelpPage() {
                 ))}
               </div>
             </section>
+            <footer className="pb-help-legal">
+              <span>Xpandedge Pty Ltd</span>
+              <LegalLinks compact />
+            </footer>
           </main>
         </section>
       </div>

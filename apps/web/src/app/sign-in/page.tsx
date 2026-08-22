@@ -7,10 +7,11 @@ import {
   signInWithGoogle,
   signInWithEmail,
   registerWithEmail,
+  sendPasswordReset,
 } from "@/lib/auth/sign-in";
 import { setSessionCookie } from "@/lib/auth/session-cookie";
-import { logEvent } from "@/lib/analytics/events";
 import { Logo } from "@/components/Logo";
+import { LegalLinks } from "@/components/LegalLinks";
 import type { UserCredential } from "firebase/auth";
 
 function GoogleIcon() {
@@ -24,29 +25,23 @@ function GoogleIcon() {
   );
 }
 
-function CheckIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <circle cx="10" cy="10" r="10" fill="var(--volt-500)" />
-      <path d="M6 10.5l2.5 2.5 5.5-5.5" stroke="var(--ink-800)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") ?? "/dashboard";
+  const [mode, setMode] = useState<"sign-in" | "create">("sign-in");
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [registered, setRegistered] = useState(false);
 
-  async function run(fn: () => Promise<UserCredential>, isRegister = false) {
+  async function run(fn: () => Promise<UserCredential>) {
     setBusy(true);
     setError(null);
+    setResetMessage(null);
     try {
       const credential = await fn();
 
@@ -54,13 +49,6 @@ function SignInForm() {
       // briefly after popup sign-in.
       const token = await credential.user.getIdToken();
       setSessionCookie(token);
-
-      if (isRegister) {
-        void logEvent("user_signed_up");
-        setRegistered(true);
-        // Brief success pause so the user sees confirmation before navigation.
-        await new Promise((r) => setTimeout(r, 1200));
-      }
 
       router.replace(redirectTo);
       router.refresh();
@@ -71,11 +59,46 @@ function SignInForm() {
     }
   }
 
-  function toggleMode() {
-    setMode((m) => (m === "signin" ? "register" : "signin"));
+  async function handlePasswordReset() {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError("Enter your email address first, then request a reset link.");
+      setResetMessage(null);
+      return;
+    }
+
+    setBusy(true);
     setError(null);
-    setRegistered(false);
+    setResetMessage(null);
+    try {
+      await sendPasswordReset(trimmedEmail);
+      setResetMessage("If an account exists for that email, a DuoRally password reset link has been sent.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Password reset failed");
+    } finally {
+      setBusy(false);
+    }
   }
+
+  function switchMode(nextMode: "sign-in" | "create") {
+    setMode(nextMode);
+    setError(null);
+    setResetMessage(null);
+  }
+
+  function handleEmailSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isCreateMode && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      setResetMessage(null);
+      return;
+    }
+    run(() => isCreateMode
+      ? registerWithEmail(email, password, displayName)
+      : signInWithEmail(email, password));
+  }
+
+  const isCreateMode = mode === "create";
 
   return (
     <div
@@ -141,13 +164,7 @@ function SignInForm() {
               lineHeight: 1.05,
             }}
           >
-            {registered ? (
-              <>You&apos;re<br /><span style={{ color: "var(--volt-500)" }}>in!</span></>
-            ) : mode === "signin" ? (
-              <>Welcome<br /><span style={{ color: "var(--volt-500)" }}>back.</span></>
-            ) : (
-              <>Join the<br /><span style={{ color: "var(--volt-500)" }}>crew.</span></>
-            )}
+            {isCreateMode ? "Create" : "Welcome"}<br /><span style={{ color: "var(--volt-500)" }}>{isCreateMode ? "account." : "back."}</span>
           </div>
           <p
             style={{
@@ -158,11 +175,7 @@ function SignInForm() {
               lineHeight: 1.55,
             }}
           >
-            {registered
-              ? "Account created — taking you to the dashboard…"
-              : mode === "signin"
-                ? "Sign in to manage your sessions and squads."
-                : "Create your account and start playing."}
+            {isCreateMode ? "Join with Google, or create an account with email." : "Continue with Google, create an account, or sign in with email."}
           </p>
         </div>
 
@@ -181,74 +194,78 @@ function SignInForm() {
             animation: "pb-rise 400ms 60ms var(--ease-out) both",
           }}
         >
-          {registered ? (
-            /* Success state — shown while the 1.2 s redirect delay runs */
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "0.875rem",
-                padding: "1rem 0",
-              }}
-            >
-              <CheckIcon />
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: "1rem", color: "var(--text-1)" }}>
-                  Account created!
-                </div>
-                <div style={{ fontSize: "0.8125rem", color: "var(--text-3)", marginTop: "0.25rem" }}>
-                  Signing you in automatically…
-                </div>
-              </div>
-              <div
-                style={{
-                  width: "100%",
-                  height: 4,
-                  background: "var(--surface-sunken)",
-                  borderRadius: "var(--r-pill)",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    background: "var(--volt-500)",
-                    borderRadius: "var(--r-pill)",
-                    animation: "pb-progress 1.2s linear forwards",
-                  }}
-                />
-              </div>
-            </div>
-          ) : (
-            <>
+          <>
               {/* Google */}
               <button
                 className="pb-btn pb-btn-ink"
                 disabled={busy}
-                onClick={() => run(signInWithGoogle, mode === "register")}
+                onClick={() => run(signInWithGoogle)}
               >
                 <GoogleIcon />
-                {mode === "register" ? "Sign up with Google" : "Continue with Google"}
+                Continue with Google
               </button>
 
               <div className="pb-divider">or</div>
 
+              <div
+                role="tablist"
+                aria-label="Account mode"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "0.35rem",
+                  padding: "0.25rem",
+                  borderRadius: "var(--r-lg)",
+                  background: "var(--surface-sunken)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {[
+                  { value: "sign-in" as const, label: "Sign in" },
+                  { value: "create" as const, label: "Create account" },
+                ].map((option) => {
+                  const selected = mode === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      disabled={busy}
+                      onClick={() => switchMode(option.value)}
+                      style={{
+                        minHeight: 40,
+                        border: "none",
+                        borderRadius: "var(--r-md)",
+                        background: selected ? "var(--ink-800)" : "transparent",
+                        color: selected ? "var(--volt-500)" : "var(--text-2)",
+                        fontWeight: 900,
+                        cursor: busy ? "default" : "pointer",
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Email / password form */}
               <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const isRegister = mode === "register";
-                  run(
-                    () =>
-                      isRegister
-                        ? registerWithEmail(email, password)
-                        : signInWithEmail(email, password),
-                    isRegister,
-                  );
-                }}
+                onSubmit={handleEmailSubmit}
                 style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}
               >
+                {isCreateMode && (
+                  <input
+                    className="pb-input"
+                    type="text"
+                    placeholder="Player name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    required
+                    autoComplete="name"
+                    minLength={2}
+                  />
+                )}
                 <input
                   className="pb-input"
                   type="email"
@@ -261,24 +278,55 @@ function SignInForm() {
                 <input
                   className="pb-input"
                   type="password"
-                  placeholder={mode === "register" ? "Choose a password (min 6 chars)" : "Password"}
+                  placeholder="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={mode === "register" ? 6 : undefined}
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  minLength={6}
+                  autoComplete={isCreateMode ? "new-password" : "current-password"}
                 />
+                {isCreateMode && (
+                  <input
+                    className="pb-input"
+                    type="password"
+                    placeholder="Confirm password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                  />
+                )}
+                {!isCreateMode && (
+                  <button
+                    type="button"
+                    className="pb-link-button"
+                    disabled={busy}
+                    onClick={handlePasswordReset}
+                    style={{
+                      alignSelf: "flex-end",
+                      border: "none",
+                      background: "transparent",
+                      color: "var(--text-2)",
+                      cursor: busy ? "default" : "pointer",
+                      font: "inherit",
+                      fontSize: "0.8125rem",
+                      fontWeight: 700,
+                      padding: "0.125rem 0",
+                      textDecoration: "underline",
+                      textUnderlineOffset: 3,
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="pb-btn pb-btn-volt"
                   disabled={busy}
                   style={{ marginTop: "0.25rem", height: 56, fontSize: "1.0625rem" }}
                 >
-                  {busy
-                    ? "One moment…"
-                    : mode === "signin"
-                      ? "Sign in →"
-                      : "Create account →"}
+                  {busy ? "One moment..." : isCreateMode ? "Create account ->" : "Sign in ->"}
                 </button>
               </form>
 
@@ -288,27 +336,36 @@ function SignInForm() {
                   <span>{error}</span>
                 </div>
               )}
+              {resetMessage && (
+                <div
+                  className="pb-success"
+                  role="status"
+                  style={{
+                    alignItems: "flex-start",
+                    background: "rgba(198,241,53,0.14)",
+                    border: "1px solid rgba(198,241,53,0.35)",
+                    borderRadius: "var(--r-lg)",
+                    color: "var(--text-1)",
+                    display: "flex",
+                    fontSize: "0.8125rem",
+                    gap: "0.375rem",
+                    lineHeight: 1.45,
+                    padding: "0.75rem 0.875rem",
+                  }}
+                >
+                  <span>{resetMessage}</span>
+                </div>
+              )}
 
-              <button
-                className="pb-btn pb-btn-ghost"
-                onClick={toggleMode}
-                style={{ fontSize: "0.875rem" }}
-              >
-                {mode === "signin"
-                  ? "New here? Create an account →"
-                  : "Already have an account? Sign in"}
-              </button>
-            </>
-          )}
+              <p className="pb-legal-consent">
+                By continuing, you agree to the <Link href="/terms">Terms</Link> and acknowledge the{" "}
+                <Link href="/privacy">Privacy Policy</Link>.
+              </p>
+              <LegalLinks compact />
+          </>
         </div>
       </div>
 
-      <style>{`
-        @keyframes pb-progress {
-          from { width: 0% }
-          to   { width: 100% }
-        }
-      `}</style>
     </div>
   );
 }

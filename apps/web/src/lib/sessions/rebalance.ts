@@ -6,8 +6,8 @@ import { rebalanceSession as serverRebalance } from "@/server/sessions/rebalance
 import {
   updatePlayerStatus as serverUpdateStatus,
   addLatePlayer as serverAddLate,
-  markPlayerInjured as serverMarkInjured,
   addGuestPlayerToSession as serverAddGuestSession,
+  markPlayerInjured as serverMarkPlayerInjured,
   swapPlayers as serverSwapPlayers,
   moveMatch as serverMoveMatch,
   disableCourt as serverDisableCourt,
@@ -35,14 +35,14 @@ export async function addLatePlayer(data: { sessionId: string; playerId: string;
   return { data: result.data };
 }
 
-export async function markPlayerInjured(data: { sessionId: string; sessionPlayerId: string }) {
-  const result = await serverMarkInjured(data.sessionId, data.sessionPlayerId);
+export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; skillLevel?: string }) {
+  const result = await serverAddGuestSession(data);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }
 
-export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; skillLevel?: string }) {
-  const result = await serverAddGuestSession(data);
+export async function markPlayerInjured(data: { sessionId: string; sessionPlayerId: string }) {
+  const result = await serverMarkPlayerInjured(data.sessionId, data.sessionPlayerId);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }

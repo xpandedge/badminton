@@ -1,8 +1,8 @@
 /**
  * Canonical public origin for links we hand to other people.
  *
- * The app is reachable on the Firebase Hosting default domain
- * (picklebaddies-85732.web.app) as well as the branded one. Anything copied
+ * The app is reachable on the Firebase Hosting default domain for whichever
+ * project it is deployed to (*.web.app) as well as the branded one. Anything copied
  * from a session — board, score, RSVP and invite links — is pasted into a chat
  * and seen by players, so it must carry the branded domain regardless of which
  * host the organiser happens to be using.

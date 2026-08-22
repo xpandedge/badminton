@@ -148,6 +148,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   }
 
   const isLive = session.status === "active" || session.status === "paused";
+  // A completed session is a record, not a console. Anything that implies more
+  // games are coming — court cards, the bench strip — is noise once it is done.
+  const isCompleted = session.status === "completed";
   const canManageLive = canManageSessionPlayers(role);
   const canScore = canEnterScore(role);
   const canControlSession = canCreateSession(role);
@@ -919,7 +922,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             automatically the instant it frees up. A bench strip answers "who's
             sitting out right now" and finished games sit below as history. */}
         <section style={{ animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
-          {matches.length === 0 && !isLive && canManageLive ? (
+          {matches.length === 0 && !isLive && !isCompleted && canManageLive ? (
             <div style={{
               background: "var(--surface)",
               border: "2px dashed var(--border)",
@@ -1045,8 +1048,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             </div>
           )}
 
-          {/* Live courts */}
-          {activeCourts.map((court) => {
+          {/* Live courts — hidden once the session is complete: no further
+              matches will be played, so a pending court card is misleading. */}
+          {!isCompleted && activeCourts.map((court) => {
             const current = scheduledByCourtId.get(court.courtId);
             if (current) return renderMatchCard(current);
             if (!isLive) return null;
@@ -1065,11 +1069,26 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             );
           })}
 
+          {/* A completed session with nothing played would otherwise render an
+              empty column, so say so plainly. */}
+          {isCompleted && doneMatches.length === 0 && (
+            <div data-testid="completed-no-games" style={{
+              background: "var(--surface)",
+              border: "2px dashed var(--border)",
+              borderRadius: "var(--r-xl)",
+              padding: "1.25rem",
+              textAlign: "center",
+            }}>
+              <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>Session complete</p>
+              <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>No games were recorded.</p>
+            </div>
+          )}
+
           {/* Finished games */}
           {doneMatches.length > 0 && (
             <div style={{ marginTop: "1.5rem" }}>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
-                Finished games
+                {isCompleted ? "Results" : "Finished games"}
               </span>
               <div style={{ marginTop: "0.625rem" }}>
                 {doneMatches.map((m) => renderMatchCard(m))}

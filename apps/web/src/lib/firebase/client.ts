@@ -40,10 +40,14 @@ export function getFirebaseServices(): FirebaseServices {
   } catch {
     db = getFirestore(app);
   }
-  // Prod functions are deployed to europe-west2, but the emulator serves callables
-  // at us-central1 (the built lib doesn't apply the configured region under the
-  // emulator). Match the emulator region so httpsCallable hits the right endpoint.
-  const functions = getFunctions(app, useEmulators ? "us-central1" : "europe-west2");
+  // Prod functions are deployed to australia-southeast1, alongside the Firestore
+  // database, but the emulator serves callables at us-central1 (the built lib
+  // doesn't apply the configured region under the emulator). Match the emulator
+  // region so httpsCallable hits the right endpoint.
+  //
+  // Keep this in step with FUNCTIONS_REGION in functions/src/options.ts — a
+  // mismatch here makes every callable silently unreachable in production.
+  const functions = getFunctions(app, useEmulators ? "us-central1" : "australia-southeast1");
 
   if (useEmulators) {
     // `services` is memoised so this block runs once per app instance. Connect each

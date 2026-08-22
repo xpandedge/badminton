@@ -18,7 +18,7 @@
   "hosting": {
     "source": "apps/web",
     "frameworksBackend": {
-      "region": "europe-west2"
+      "region": "australia-southeast1"
     },
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
   },

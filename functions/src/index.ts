@@ -9,11 +9,9 @@
  *
  * Listed here so the integration surface is fixed early.
  */
-import { setGlobalOptions } from "firebase-functions/v2";
-import { initializeApp } from "firebase-admin/app";
-
-initializeApp();
-setGlobalOptions({ region: "europe-west2", maxInstances: 10 });
+// Must be the first import: it sets the region and initialises the admin app
+// before any of the re-exports below define their functions. See options.ts.
+import "./options.js";
 
 // Planned callable functions (implemented in later milestones):
 //   submitScore(sessionId, roundId, matchId, payload)   — DELTA_SPEC D1

@@ -54,9 +54,43 @@ jobs:
         run: npm install -g firebase-tools
 
       - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Configure production Firebase runtime
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+          test -n "$FIREBASE_SERVICE_ACCOUNT"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+          if (!account.client_email || !account.private_key) {
+            throw new Error("FIREBASE_SERVICE_ACCOUNT is missing client_email or private_key");
+          }
+          const privateKey = account.private_key.replace(/\r?\n/g, "\\n");
+          fs.writeFileSync(
+            "apps/web/.env.picklebaddies-prod-e727d",
+            [
+              "FIREBASE_ADMIN_PROJECT_ID=picklebaddies-prod-e727d",
+              `FIREBASE_ADMIN_CLIENT_EMAIL=${account.client_email}`,
+              `FIREBASE_ADMIN_PRIVATE_KEY=${privateKey}`,
+              "",
+            ].join("\n"),
+          );
+          NODE
+
+      - name: Verify production Firebase configuration
+        run: |
+          test "$NEXT_PUBLIC_FIREBASE_PROJECT_ID" = "picklebaddies-prod-e727d"
+          test -n "$NEXT_PUBLIC_FIREBASE_API_KEY"
+          test -n "$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN"
+          test -n "$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"
+          test -n "$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID"
+          test -n "$NEXT_PUBLIC_FIREBASE_APP_ID"
 
       - name: Set up Artifact Registry cleanup policy
         # Requires `Artifact Registry Admin` role on the service account.

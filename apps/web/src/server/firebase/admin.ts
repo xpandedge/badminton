@@ -25,6 +25,22 @@ function getAdminApp(): App {
     return _app;
   }
 
+  // On Cloud Run (which is where Firebase Hosting runs the Next.js server) the
+  // platform supplies credentials for the project the service belongs to, so
+  // Application Default Credentials are both sufficient and authoritative.
+  //
+  // This deliberately takes priority over FIREBASE_ADMIN_* env vars. A stray
+  // .env.local can end up inside the deployed bundle, and Next loads it at
+  // runtime — which previously pointed production at a developer's project.
+  // Never let a packaged file decide which database production writes to.
+  //
+  // `K_SERVICE` is set by Cloud Run on every revision; `FUNCTION_TARGET` covers
+  // the Cloud Functions runtime.
+  if (process.env.K_SERVICE || process.env.FUNCTION_TARGET) {
+    _app = initializeApp();
+    return _app;
+  }
+
   const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n");
 

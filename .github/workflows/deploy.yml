@@ -60,28 +60,13 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Configure production Firebase runtime
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: |
-          test -n "$FIREBASE_SERVICE_ACCOUNT"
-          node <<'NODE'
-          const fs = require("node:fs");
-          const account = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-          if (!account.client_email || !account.private_key) {
-            throw new Error("FIREBASE_SERVICE_ACCOUNT is missing client_email or private_key");
-          }
-          const privateKey = account.private_key.replace(/\r?\n/g, "\\n");
-          fs.writeFileSync(
-            "apps/web/.env.picklebaddies-prod-e727d",
-            [
-              "FIREBASE_ADMIN_PROJECT_ID=picklebaddies-prod-e727d",
-              `FIREBASE_ADMIN_CLIENT_EMAIL=${account.client_email}`,
-              `FIREBASE_ADMIN_PRIVATE_KEY=${privateKey}`,
-              "",
-            ].join("\n"),
-          );
-          NODE
+      # No FIREBASE_ADMIN_* injection here on purpose. Firebase Hosting reads
+      # apps/web/.env.<projectId> and pushes it to the Cloud Run service, which
+      # rejects the reserved FIREBASE_ prefix outright:
+      #   "Key FIREBASE_ADMIN_PROJECT_ID starts with a reserved prefix"
+      # The server tier now uses Application Default Credentials on Cloud Run
+      # (see apps/web/src/server/firebase/admin.ts), so no key material needs to
+      # reach the runtime at all.
 
       - name: Verify production Firebase configuration
         run: |

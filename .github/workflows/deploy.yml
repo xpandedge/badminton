@@ -64,5 +64,16 @@ jobs:
         # Safe to re-run; idempotent.
         run: firebase functions:artifacts:setpolicy --project picklebaddies-prod-e727d --force || true
 
-      - name: Deploy (hosting + functions + rules + indexes)
-        run: firebase deploy --only hosting,functions,firestore --project picklebaddies-prod-e727d --non-interactive --force
+      # Split from functions on purpose. Functions deploys have been failing
+      # since the move to the prod project, and a combined deploy meant the web
+      # app and rules could not ship either. Hosting and Firestore carry all the
+      # user-facing work, so they go first and must succeed.
+      - name: Deploy hosting + rules + indexes
+        run: firebase deploy --only hosting,firestore --project picklebaddies-prod-e727d --non-interactive --force
+
+      # Functions are reference-only for the MVP (DELTA_SPEC D8) apart from the
+      # join/invite callables. Allowed to fail so a functions problem never
+      # blocks the web app again — the step still shows red so it is not hidden.
+      - name: Deploy functions
+        continue-on-error: true
+        run: firebase deploy --only functions --project picklebaddies-prod-e727d --non-interactive --force

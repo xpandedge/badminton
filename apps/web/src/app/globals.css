@@ -302,6 +302,28 @@ button, input, textarea, select { font-family: inherit; }
 }
 .pb-btn-ghost:hover:not(:disabled) { color: var(--text-1); }
 
+.pb-dashboard-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 .75rem;
+  border: 1px solid var(--volt-600);
+  border-radius: var(--r-md);
+  background: var(--volt-50);
+  color: var(--ink-800);
+  font: 800 .6875rem var(--font-mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+.pb-dashboard-create:hover { background: var(--volt-100); border-color: var(--volt-700); }
+.pb-dashboard-create:active { transform: scale(.98); }
+.pb-dashboard-create:focus-visible { outline: 2px solid var(--volt-500); outline-offset: 2px; }
+
 /* Divider */
 .pb-divider {
   display: flex;

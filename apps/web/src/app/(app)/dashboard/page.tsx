@@ -373,7 +373,7 @@ export default function DashboardPage() {
           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>
             Your squads
           </span>
-          <Link href="/groups" style={{ fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--volt-500)", textDecoration: "none" }}>
+          <Link href="/groups" className="pb-dashboard-create">
             Create
           </Link>
         </div>

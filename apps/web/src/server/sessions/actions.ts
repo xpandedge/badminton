@@ -374,10 +374,16 @@ export async function getMySessionsAction(): Promise<ActionResult<{
       db.collection("sessions").where("groupId", "==", groupId).get()
     ),
   );
+  const playerSessionSnaps = playerSnap.docs.length > 0
+    ? await db.getAll(...playerSnap.docs.map((playerDoc) => playerDoc.ref.parent.parent!))
+    : [];
 
-  const allDocs = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+  const allDocs = new Map<string, FirebaseFirestore.DocumentSnapshot>();
   for (const snapshot of allSessionSnaps) {
     for (const sessionDoc of snapshot.docs) allDocs.set(sessionDoc.id, sessionDoc);
+  }
+  for (const sessionDoc of playerSessionSnaps) {
+    if (sessionDoc.exists) allDocs.set(sessionDoc.id, sessionDoc);
   }
 
   const sessionIds = [...allDocs.keys()];
@@ -433,10 +439,10 @@ export async function getMySessionsAction(): Promise<ActionResult<{
   };
 
   const organising = [...allDocs.values()]
-    .filter((sessionDoc) => managedGroupIds.has(sessionDoc.data().groupId))
+    .filter((sessionDoc) => managedGroupIds.has(sessionDoc.data()?.groupId))
     .map(toSummary);
   const playing = [...allDocs.values()]
-    .filter((sessionDoc) => !managedGroupIds.has(sessionDoc.data().groupId))
+    .filter((sessionDoc) => !managedGroupIds.has(sessionDoc.data()?.groupId))
     .map(toSummary);
 
   return ok({ organising, playing });

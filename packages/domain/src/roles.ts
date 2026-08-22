@@ -1,5 +1,7 @@
 // DELTA_SPEC D5 + D8 - group permissions and session participation stay separate.
 
+import type { SessionStatus } from "./session-status.js";
+
 /** Stored group role. `organiser` remains for legacy Firestore records. */
 export type GroupRole = "owner" | "admin" | "member" | "organiser";
 export type ActiveGroupRole = Exclude<GroupRole, "organiser">;
@@ -81,6 +83,16 @@ export const canDeleteSession = isGroupAdminRole;
 
 // Score entry remains a member action.
 export const canEnterScore = isGroupMemberRole;
+
+/** Owners may correct completed scores after a session ends; other admins may
+ * correct them only while the live session is active or paused. */
+export function canCorrectCompletedScore(
+  role: GroupRole | null,
+  sessionStatus: SessionStatus,
+): boolean {
+  if (role === "owner") return sessionStatus !== "cancelled";
+  return isGroupAdminRole(role) && (sessionStatus === "active" || sessionStatus === "paused");
+}
 
 // Legacy alias used by older Cloud Functions.
 export const canRebalance = isGroupAdminRole;

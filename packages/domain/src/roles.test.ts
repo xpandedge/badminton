@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAddGroupMember,
   canAdvanceRound,
+  canCorrectCompletedScore,
   canCreateSession,
   canDeleteGroup,
   canDeleteSession,
@@ -94,6 +95,17 @@ describe("permission matrix", () => {
     expect(canEnterScore("organiser")).toBe(true);
     expect(canEnterScore("member")).toBe(true);
     expect(canEnterScore(null)).toBe(false);
+  });
+
+  it("lets owners correct scores after a session ends, but limits other admins to live sessions", () => {
+    expect(canCorrectCompletedScore("owner", "completed")).toBe(true);
+    expect(canCorrectCompletedScore("owner", "active")).toBe(true);
+    expect(canCorrectCompletedScore("owner", "cancelled")).toBe(false);
+    expect(canCorrectCompletedScore("admin", "active")).toBe(true);
+    expect(canCorrectCompletedScore("organiser", "paused")).toBe(true);
+    expect(canCorrectCompletedScore("admin", "completed")).toBe(false);
+    expect(canCorrectCompletedScore("member", "active")).toBe(false);
+    expect(canCorrectCompletedScore(null, "completed")).toBe(false);
   });
 
   it("lets admins add regular members but reserves admin assignment for the owner", () => {

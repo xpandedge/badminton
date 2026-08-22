@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let owners/admins correct completed scores during an active or paused session with server enforcement and visible traceability.
+**Goal:** Let owners correct completed scores at any time and non-owner admins correct them during an active or paused session with server enforcement and visible traceability.
 
-**Architecture:** Reuse `submitScore` for both first entry and corrections. The server distinguishes completed-match edits, requires an admin-level group role, reverses the previous aggregate delta, applies the new delta, stores the latest correction metadata on the match, and appends a session audit log. The live results card exposes the correction only when the session is active/paused and the viewer can manage the session.
+**Architecture:** Reuse `submitScore` for both first entry and corrections. The server distinguishes completed-match edits, permits owners at any session status except cancelled matches and permits non-owner admins only while active/paused, reverses the previous aggregate delta, applies the new delta, stores the latest correction metadata on the match, and appends a session audit log. The live results card exposes the correction under the same role/status rules.
 
 **Tech Stack:** Next.js 15, React 19, TypeScript, Firebase Admin Firestore, Vitest.
 
 ## Global Constraints
 
 - Score entry remains available to squad members.
-- Score correction is available only to owners, admins, or legacy `organiser` records.
-- Corrections are blocked after the session is completed or cancelled.
+- Score correction is available to owners at any time and to admins or legacy `organiser` records while the session is active/paused.
+- Corrections are blocked for cancelled matches.
 - Existing session/global aggregate reconciliation must remain transactional.
 - Do not expose or store service-account credentials.
 

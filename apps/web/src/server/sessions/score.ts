@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { canEnterScore, deriveWinner, type ScorePayload, type ScoringMode } from "@picklebaddies/domain";
+import { canCorrectCompletedScore, canEnterScore, deriveWinner, type ScorePayload, type ScoringMode } from "@picklebaddies/domain";
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
@@ -13,6 +13,17 @@ export interface SubmitScoreInput {
   sessionId: string;
   matchId: string;
   payload: ScorePayload;
+}
+
+function initialsForDisplayName(displayName: string): string {
+  const initials = displayName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  return initials || "AD";
 }
 
 export async function submitScore(input: SubmitScoreInput): Promise<ActionResult<void>> {
@@ -42,7 +53,12 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
       if (!canEnterScore(role)) throw Object.assign(new Error("Must be a squad member to submit scores"), { code: "FORBIDDEN" });
 
-      if (session.status !== "active" && session.status !== "paused") {
+      const isEdit = match.status === "completed";
+      if (isEdit && !canCorrectCompletedScore(role, session.status)) {
+        throw Object.assign(new Error("Only squad owners and admins can correct completed scores"), { code: "FORBIDDEN" });
+      }
+
+      if (!isEdit && session.status !== "active" && session.status !== "paused") {
         throw Object.assign(new Error("Scores can only be entered while the session is active"), { code: "FAILED_PRECONDITION" });
       }
       if (match.status === "cancelled") {
@@ -62,7 +78,6 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
       const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
       const globalRefs = allPlayerIds.map((id) => db.doc(`players/${id}`));
 
-      const isEdit = match.status === "completed";
       const auto = isEdit ? null : await readAutoFillInputs(t, db, sessionId, matchId);
 
       const [playerDocs, lbDocs, globalDocs] = await Promise.all([
@@ -85,6 +100,9 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
       // ── THEN ALL WRITES ──
       const priorWinner: "A" | "B" | undefined = match.winnerTeam;
       const priorPayload: ScorePayload | undefined = match.scorePayload;
+      const memberData = memberSnap.data() as { displayName?: string } | undefined;
+      const actorDisplayName = memberData?.displayName?.trim() || "Squad admin";
+      const actorInitials = initialsForDisplayName(actorDisplayName);
 
       for (let i = 0; i < allPlayerIds.length; i++) {
         const pid = allPlayerIds[i]!;
@@ -108,7 +126,11 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         t.set(lbRefs[i]!, lbStats, { merge: true });
         const isGuestGlobal = (globalDocs[i]?.data() as any)?.isGuest === true;
         if (globalDocs[i]?.exists && !isGuestGlobal) {
-          t.update(globalRefs[i]!, { ...buildGlobalUpdate(gStats), lastPlayedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+          t.update(globalRefs[i]!, {
+            ...buildGlobalUpdate(gStats),
+            ...(isEdit ? {} : { lastPlayedAt: FieldValue.serverTimestamp() }),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
         }
       }
 
@@ -117,15 +139,33 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         winnerTeam,
         status: "completed",
         isLocked: true,
-        completedAt: FieldValue.serverTimestamp(),
+        completedAt: isEdit ? (match.completedAt ?? FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
+        ...(isEdit ? {
+          scoreEditedAt: FieldValue.serverTimestamp(),
+          scoreEditedBy: user.uid,
+          scoreEditedByName: actorDisplayName,
+          scoreEditedByInitials: actorInitials,
+          scoreEditedFrom: {
+            payload: priorPayload ?? null,
+            winnerTeam: priorWinner ?? null,
+          },
+        } : {}),
       });
 
       if (auto) writeAutoFill(t, db, sessionId, sessionRef, auto);
 
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
+        actorDisplayName,
+        actorInitials,
         action: isEdit ? "score/changed" : "score/submitted",
-        details: { matchId, winnerTeam },
+        details: {
+          matchId,
+          winnerTeam,
+          previousWinnerTeam: priorWinner ?? null,
+          previousPayload: priorPayload ?? null,
+          nextPayload: payload,
+        },
         createdAt: FieldValue.serverTimestamp(),
       });
     });

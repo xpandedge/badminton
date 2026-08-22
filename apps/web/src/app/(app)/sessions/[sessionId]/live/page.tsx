@@ -8,7 +8,7 @@ import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
-import { canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
+import { canCorrectCompletedScore, canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore } from "@/lib/sessions/scoring";
@@ -21,6 +21,13 @@ import { ensureSessionRsvpLink } from "@/server/sessions/actions";
 
 function titleCase(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function scoreLabel(payload: any, winnerTeam: "A" | "B" | null | undefined): string {
+  if (typeof payload?.teamAScore === "number" && typeof payload?.teamBScore === "number") {
+    return `${payload.teamAScore}-${payload.teamBScore}`;
+  }
+  return winnerTeam ? `Team ${winnerTeam} won` : "No score";
 }
 
 function statusTone(status: string) {
@@ -62,6 +69,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
   const [scoringMatchIds, setScoringMatchIds] = useState<Set<string>>(() => new Set());
+  const [editingScoreMatchIds, setEditingScoreMatchIds] = useState<Set<string>>(() => new Set());
   const scoringMatchIdsRef = useRef<Set<string>>(new Set());
 
   const leaderboardLogged = useRef(false);
@@ -368,6 +376,18 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         delete next[matchId];
         return next;
       });
+      setEditingScoreMatchIds((current) => {
+        if (!current.has(matchId)) return current;
+        const next = new Set(current);
+        next.delete(matchId);
+        return next;
+      });
+      scoringMatchIdsRef.current.delete(matchId);
+      setScoringMatchIds((current) => {
+        const next = new Set(current);
+        next.delete(matchId);
+        return next;
+      });
     } catch (err: any) {
       setActionError(err.message);
       scoringMatchIdsRef.current.delete(matchId);
@@ -377,6 +397,32 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         return next;
       });
     }
+  };
+
+  const startScoreEdit = (match: any) => {
+    if (!canCorrectCompletedScore(role, session!.status) || match.status !== "completed") return;
+    const payload = match.scorePayload;
+    setPointInputs((current) => ({
+      ...current,
+      [match.id]: {
+        a: typeof payload?.teamAScore === "number" ? String(payload.teamAScore) : "",
+        b: typeof payload?.teamBScore === "number" ? String(payload.teamBScore) : "",
+      },
+    }));
+    setEditingScoreMatchIds((current) => new Set(current).add(match.id));
+  };
+
+  const cancelScoreEdit = (matchId: string) => {
+    setEditingScoreMatchIds((current) => {
+      const next = new Set(current);
+      next.delete(matchId);
+      return next;
+    });
+    setPointInputs((current) => {
+      const next = { ...current };
+      delete next[matchId];
+      return next;
+    });
   };
 
   const activeCourts = (session.courts ?? []).filter((c) => c.isActive);
@@ -480,6 +526,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   function renderMatchCard(m: any) {
     const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
     const isScoring = scoringMatchIds.has(m.id);
+    const isEditing = editingScoreMatchIds.has(m.id);
+    const canEditScore = m.status === "completed" && canCorrectCompletedScore(role, session!.status);
     const inMatch = new Set<string>([
       ...m.teamA.map((p: any) => p.playerId),
       ...m.teamB.map((p: any) => p.playerId),
@@ -531,17 +579,34 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               {m.courtName ?? `Court ${m.courtId}`}
             </p>
           </div>
-          <span style={{
-            padding: "4px 8px",
-            borderRadius: "var(--r-pill)",
-            background: m.winnerTeam ? "rgba(198,241,53,0.18)" : isLocked ? "var(--n-200)" : matchTone.bg,
-            color: m.winnerTeam ? "var(--volt-600)" : isLocked ? "var(--text-3)" : matchTone.fg,
-            fontSize: "0.75rem",
-            fontWeight: 900,
-            whiteSpace: "nowrap",
-          }}>
-            {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Done" : m.status === "scheduled" ? "Current" : formatSessionStatus(m.status)}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span style={{
+              padding: "4px 8px",
+              borderRadius: "var(--r-pill)",
+              background: m.winnerTeam ? "rgba(198,241,53,0.18)" : isLocked ? "var(--n-200)" : matchTone.bg,
+              color: m.winnerTeam ? "var(--volt-600)" : isLocked ? "var(--text-3)" : matchTone.fg,
+              fontSize: "0.75rem",
+              fontWeight: 900,
+              whiteSpace: "nowrap",
+            }}>
+              {m.winnerTeam ? `🏆 Team ${m.winnerTeam} Won` : isLocked ? "Done" : m.status === "scheduled" ? "Current" : formatSessionStatus(m.status)}
+            </span>
+            {m.scoreEditedByName && (
+              <span
+                tabIndex={0}
+                role="img"
+                aria-label={`Score corrected by ${m.scoreEditedByName}. Previous result ${scoreLabel(m.scoreEditedFrom?.payload, m.scoreEditedFrom?.winnerTeam)}; current result ${scoreLabel(m.scorePayload, m.winnerTeam)}.`}
+                title={`Score corrected by ${m.scoreEditedByName}: ${scoreLabel(m.scoreEditedFrom?.payload, m.scoreEditedFrom?.winnerTeam)} to ${scoreLabel(m.scorePayload, m.winnerTeam)}`}
+                style={{ color: "var(--text-2)", display: "inline-flex", cursor: "help" }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5" />
+                  <path d="M12 8h.01" />
+                </svg>
+              </span>
+            )}
+          </div>
         </div>
         <div style={{
           display: "grid",
@@ -573,7 +638,13 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </div>
         </div>
 
-        {canScore && !isLocked && (() => {
+        {canEditScore && !isEditing && (
+          <button type="button" onClick={() => startScoreEdit(m)} style={{ ...secondaryActionStyle, width: "100%" }}>
+            Edit score
+          </button>
+        )}
+
+        {canScore && (!isLocked || isEditing) && (() => {
           const pts = pointInputs[m.id];
           const a = pts?.a ? Number(pts.a) : undefined;
           const b = pts?.b ? Number(pts.b) : undefined;
@@ -596,7 +667,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 }}
               >
                 <span className="pb-score-loader" aria-hidden="true" />
-                Loading next game...
+                {isEditing ? "Saving correction..." : "Loading next game..."}
               </div>
             );
           }
@@ -623,13 +694,18 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               )}
               {hasValidPoints ? (
                 <button data-testid="save-score-btn" disabled={isScoring} onClick={() => submitWinner(m.id, a! > b! ? "A" : "B")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>
-                  Save Score — {a! > b! ? "A" : "B"} Wins
+                  {isEditing ? "Save correction" : "Save Score"} — {a! > b! ? "A" : "B"} Wins
                 </button>
               ) : (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                  <button data-testid="score-winner-a" disabled={isScoring} onClick={() => submitWinner(m.id, "A")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>A Wins</button>
-                  <button data-testid="score-winner-b" disabled={isScoring} onClick={() => submitWinner(m.id, "B")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>B Wins</button>
+                  <button data-testid="score-winner-a" disabled={isScoring} onClick={() => submitWinner(m.id, "A")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>{isEditing ? "Correct to A" : "A Wins"}</button>
+                  <button data-testid="score-winner-b" disabled={isScoring} onClick={() => submitWinner(m.id, "B")} style={{ ...primaryActionStyle, cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}>{isEditing ? "Correct to B" : "B Wins"}</button>
                 </div>
+              )}
+              {isEditing && !isScoring && (
+                <button type="button" onClick={() => cancelScoreEdit(m.id)} style={secondaryActionStyle}>
+                  Cancel
+                </button>
               )}
             </div>
           );
@@ -794,7 +870,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               {session.status === "active" || session.status === "paused"
                 ? "Score games, manage courts and players."
                 : session.status === "completed"
-                  ? "Session finished — scores are locked."
+                  ? "Session finished — owners can correct score mistakes."
                   : "Get players on court, then hit Start Playing."}
             </p>
           </div>

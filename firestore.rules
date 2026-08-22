@@ -34,6 +34,28 @@ service cloud.firestore {
     function isSuperAdmin() {
       return isSuperAdminToken() || isSuperAdminProfile();
     }
+    function isGroupActive(groupId) {
+      return exists(/databases/$(database)/documents/groups/$(groupId)) &&
+        !get(/databases/$(database)/documents/groups/$(groupId)).data.keys().hasAny([
+          "archivedAt",
+          "purgeAfter",
+          "archivedBy"
+        ]);
+    }
+    function archiveMetadataUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        "archivedAt",
+        "purgeAfter",
+        "archivedBy"
+      ]);
+    }
+    function archiveMetadataAbsent() {
+      return !request.resource.data.keys().hasAny([
+        "archivedAt",
+        "purgeAfter",
+        "archivedBy"
+      ]);
+    }
 
     // Users can read/write only their own profile (PRD §19.1).
     match /users/{userId} {
@@ -72,27 +94,29 @@ service cloud.firestore {
 
       allow read: if isSuperAdmin() || isMember() || (request.auth != null && request.auth.uid in resource.data.memberIds);
       // Squad creation goes through createSquad server action; allow here for bootstrap compatibility.
-      allow create: if isSuperAdmin() || (request.auth != null && request.resource.data.createdBy == request.auth.uid);
-      allow update, delete: if isSuperAdmin() || isOwner();
+      allow create: if archiveMetadataAbsent() &&
+        (isSuperAdmin() || (request.auth != null && request.resource.data.createdBy == request.auth.uid));
+      allow update: if isGroupActive(groupId) && archiveMetadataUnchanged() && (isSuperAdmin() || isOwner());
+      allow delete: if isGroupActive(groupId) && (isSuperAdmin() || isOwner());
 
       match /members/{memberId} {
         allow read: if isSuperAdmin() || isMember();
         // Owner can write non-owner member docs. Bootstrap: group creator may write their own first (owner) doc.
-        allow create: if isSuperAdmin()
+        allow create: if isGroupActive(groupId) && (isSuperAdmin()
           || (isOwner() && request.resource.data.get('role', '') != "owner")
           || (isNonOwnerAdmin() && request.resource.data.get('role', '') == "member")
-          || (isGroupCreator() && memberId == request.auth.uid);
-        allow update: if isSuperAdmin()
+          || (isGroupCreator() && memberId == request.auth.uid));
+        allow update: if isGroupActive(groupId) && (isSuperAdmin()
           || (isOwner() && resource.data.get('role', '') != "owner" && request.resource.data.get('role', '') != "owner")
-          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member" && request.resource.data.get('role', '') == "member");
-        allow delete: if isSuperAdmin()
+          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member" && request.resource.data.get('role', '') == "member"));
+        allow delete: if isGroupActive(groupId) && (isSuperAdmin()
           || (isOwner() && resource.data.get('role', '') != "owner")
-          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member");
+          || (isNonOwnerAdmin() && resource.data.get('role', '') == "member"));
       }
 
       match /players/{playerId} {
         allow read: if isSuperAdmin() || isMember();
-        allow write: if isSuperAdmin() || isAdmin();
+        allow write: if isGroupActive(groupId) && (isSuperAdmin() || isAdmin());
       }
 
       // Self-join requests: any member can see pending requests; all writes
@@ -104,10 +128,10 @@ service cloud.firestore {
 
       match /venues/{venueId} {
         allow read: if isSuperAdmin() || isMember();
-        allow write: if isSuperAdmin() || isAdmin();
+        allow write: if isGroupActive(groupId) && (isSuperAdmin() || isAdmin());
         match /courts/{courtId} {
           allow read: if isSuperAdmin() || isMember();
-          allow write: if isSuperAdmin() || isAdmin();
+          allow write: if isGroupActive(groupId) && (isSuperAdmin() || isAdmin());
         }
       }
     }
@@ -126,6 +150,9 @@ service cloud.firestore {
         return request.auth != null &&
           exists(/databases/$(database)/documents/groups/$(getSessionGroupId())/members/$(request.auth.uid));
       }
+      function isSessionGroupActive() {
+        return isGroupActive(getSessionGroupId());
+      }
       // Owner/admin-level access, including legacy organiser records.
       function isSessionGroupAdmin() {
         return isSessionGroupMember() &&
@@ -133,6 +160,7 @@ service cloud.firestore {
       }
       function isCreateSessionGroupAdmin() {
         return request.auth != null &&
+          isGroupActive(getCreateSessionGroupId()) &&
           exists(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/groups/$(getCreateSessionGroupId())/members/$(request.auth.uid)).data.get('role', '') in ["owner", "admin", "organiser"];
       }
@@ -147,7 +175,7 @@ service cloud.firestore {
       // Writes stay admin-only — all real mutations go through server actions.
       allow read: if isSessionGroupMember() || isSessionPlayer();
       allow create: if isCreateSessionGroupAdmin();
-      allow update: if isSessionGroupAdmin();
+      allow update: if isSessionGroupActive() && isSessionGroupAdmin();
 
       match /players/{playerId} {
         allow read: if isSessionGroupMember() || request.auth.uid == playerId;
@@ -156,7 +184,8 @@ service cloud.firestore {
 
       // Only organiser+ may read/update join requests; create is server-only (D6).
       match /joinRequests/{reqId} {
-        allow read, update: if isSessionGroupAdmin();
+        allow read: if isSessionGroupAdmin();
+        allow update: if isSessionGroupActive() && isSessionGroupAdmin();
         allow create: if false; // Server tier only (D6)
       }
 

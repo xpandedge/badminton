@@ -21,6 +21,23 @@ import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 import { toPlain } from "@/server/lib/serialize";
+import { requireActiveSquad } from "@/server/squads/actions";
+
+export async function requireActiveSessionSquad(
+  db: FirebaseFirestore.Firestore,
+  sessionId: string,
+  uid: string,
+): Promise<ActionResult<{ groupId: string }>> {
+  const sessionSnap = await db.doc(`sessions/${sessionId}`).get();
+  if (!sessionSnap.exists) return err("NOT_FOUND", "Session not found");
+
+  const groupId = String(sessionSnap.data()?.groupId ?? "").trim();
+  if (!groupId) return err("NOT_FOUND", "Session squad not found");
+
+  const activeSquad = await requireActiveSquad(db, groupId, uid);
+  if (!activeSquad.ok) return activeSquad;
+  return ok({ groupId });
+}
 
 export interface CourtInput {
   name: string;
@@ -123,6 +140,9 @@ export async function createSession(
   }
 
   const db = getAdminDb();
+
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   // Verify membership — any member can create (D8)
   const [memberSnap, groupSnap] = await Promise.all([
@@ -230,6 +250,9 @@ export async function updateSessionStatus(
   const db = getAdminDb();
   const transition = STATUS_TRANSITIONS[statusTo]!;
   const targetingActive = statusTo === "active";
+
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -470,6 +493,8 @@ export async function updateSessionRsvpCapacity(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
   let capacity: SessionRsvpCapacity & { cutoffAt: Date | null };
   try {
     const normalized = normalizeSessionRsvpCapacity(input);
@@ -535,6 +560,8 @@ export async function ensureSessionRsvpLink(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
   try {
     const result = await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
@@ -608,6 +635,8 @@ export async function deleteSession(sessionId: string): Promise<ActionResult<voi
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -664,6 +693,8 @@ export async function rsvpToSession(
 
   const db = getAdminDb();
   const auth = getAdminAuth();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const sessionRef = db.doc(`sessions/${sessionId}`);
@@ -989,6 +1020,8 @@ async function updateCasualRsvpOverride(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
   try {
     await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
@@ -1079,6 +1112,8 @@ export async function syncConfirmedRsvpsToSessionPlayers(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {
@@ -1269,6 +1304,8 @@ export async function addCourtToSession(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {

@@ -34,3 +34,4 @@ export { swapPlayers, moveMatch, disableCourt } from "./manualOverride.js";
 export { addGroupMemberByEmail } from "./groups.js";
 export { getScoreLinkData, submitScoreByLink } from "./scoreLink.js";
 export { joinGroupByInvite } from "./groupInvite.js";
+export { purgeArchivedSquads } from "./purgeArchivedSquads.js";

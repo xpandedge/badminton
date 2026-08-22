@@ -11,6 +11,7 @@ import {
 } from "@picklebaddies/domain";
 import { getAdminDb } from "@/server/firebase/admin";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 
 export interface PublicRsvpRoster {
   sessionId: string;
@@ -169,6 +170,8 @@ async function updateKnownPlayerRsvp(
 
   const db = getAdminDb();
   const session = sessionDoc.data();
+  const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
+  if (!activeSquad.ok) return activeSquad;
   const playerRef = db.doc(`groups/${session.groupId}/players/${cleanPlayerId}`);
   const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${cleanPlayerId}`);
 
@@ -220,6 +223,8 @@ export async function joinPublicCasualRsvp(rsvpCode: string, displayName: string
 
   const db = getAdminDb();
   const session = sessionDoc.data();
+  const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
+  if (!activeSquad.ok) return activeSquad;
   const groupPlayersSnap = await db.collection(`groups/${session.groupId}/players`).get();
   const exactKnownName = groupPlayersSnap.docs.some((doc) => {
     const knownName = String(doc.data().displayName ?? "").trim();
@@ -262,6 +267,8 @@ export async function removePublicCasualRsvp(rsvpCode: string, displayName: stri
   if (!sessionDoc) return err("NOT_FOUND", "This RSVP link is not available");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
+  if (!activeSquad.ok) return activeSquad;
   const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${publicRsvpDocId(normalizedName)}`);
   const snap = await rsvpRef.get();
   if (!snap.exists || snap.data()?.participantType !== "public_casual") {

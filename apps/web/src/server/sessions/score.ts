@@ -5,6 +5,7 @@ import { canEnterScore, deriveWinner, type ScorePayload, type ScoringMode } from
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 import { validatePayload, readAutoFillInputs, writeAutoFill } from "./scheduling";
 import { applySquadRatingForMatch } from "./squad-rating";
 
@@ -22,6 +23,8 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
   if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -213,6 +216,8 @@ export async function completeMatchWithoutScore(
   if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {

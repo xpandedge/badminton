@@ -11,17 +11,20 @@ import {
   canRemoveGroupMember,
   groupRoleLabel,
   normalizeGroupRole,
+  getTimestampMillis,
+  isSquadArchived,
   type GroupRole,
   type SquadPlayerKind,
 } from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
 import { getGroup, watchGroupMembers, watchJoinRequests, watchGroupDoc, type JoinRequest } from "@/lib/groups/groups";
+import type { GroupDocument } from "@/lib/groups/types";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { watchCourts, watchVenues } from "@/lib/groups/venues";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
 import { rsvpToSession, deleteSession, getGroupSessionsAction } from "@/server/sessions/actions";
-import { addMemberToSquad, addVenueToSquad, addCourtToSquadVenue, approveJoinRequest, rejectJoinRequest, leaveSquad, rotateInviteCode, removePlayerFromSquad, transferSquadOwnership, updateMemberRole, updateSquadPlayerKind, updateSquadRsvpDefaults } from "@/server/squads/actions";
+import { addMemberToSquad, addVenueToSquad, addCourtToSquadVenue, approveJoinRequest, rejectJoinRequest, archiveSquad, leaveSquad, restoreSquad, rotateInviteCode, removePlayerFromSquad, transferSquadOwnership, updateMemberRole, updateSquadPlayerKind, updateSquadRsvpDefaults } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
 import { getFirestore, doc, getDoc } from "firebase/firestore";
 import { getApp } from "firebase/app";
@@ -62,14 +65,24 @@ const DEFAULT_SQUAD_RSVP_DEFAULTS: SquadRsvpDefaultsState = {
   cutoffHoursBeforeStart: null,
 };
 
+function formatArchiveDeadline(value: unknown): string {
+  const milliseconds = getTimestampMillis(value);
+  if (milliseconds === null) return "the end of the restore window";
+  return new Date(milliseconds).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 export default function GroupDetailsPage({ params }: { params: Promise<{ groupId: string }> }) {
   const { groupId } = use(params);
   const router = useRouter();
   const role = useGroupRole(groupId);
-  const canAdminister = canManageGroup(role);
-  const isOwner = canManageAdmins(role);
-
-  const [group, setGroup] = useState<{ name: string; description: string | null } | null>(null);
+  const [group, setGroup] = useState<GroupDocument | null>(null);
+  const isArchived = isSquadArchived(group ?? {});
+  const isOwnerRole = canManageAdmins(role);
+  const isOwner = isOwnerRole && !isArchived;
+  const canAdminister = canManageGroup(role) && !isArchived;
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [venues, setVenues] = useState<VenueRow[]>([]);
@@ -89,6 +102,8 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
   const [roleChangingId, setRoleChangingId] = useState<string | null>(null);
   const [ownershipChangingId, setOwnershipChangingId] = useState<string | null>(null);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { confirm: requestConfirmation, confirmationDialog } = useConfirmDialog();
@@ -278,7 +293,48 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     router.replace("/dashboard");
     router.refresh();
   };
+  const handleArchiveSquad = async () => {
+    if (!isOwnerRole || isArchived || isArchiving) return;
+    const confirmed = await requestConfirmation({
+      title: `Archive ${group?.name ?? "this squad"}?`,
+      description: "The squad will become read-only immediately. All squad data, including sessions and results, will be permanently deleted in 2 days. You can restore it during that window.",
+      confirmLabel: "Archive squad",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setIsArchiving(true);
+    const result = await archiveSquad(groupId).catch(() => null);
+    setIsArchiving(false);
+    if (!result?.ok) {
+      notify(result?.message ?? "Could not archive this squad.", "error");
+      return;
+    }
+    setGroup((current) => current ? {
+      ...current,
+      archivedAt: new Date(),
+      purgeAfter: result.data.purgeAfter,
+      archivedBy: user?.uid,
+    } : current);
+    notify("Squad archived. You can restore it for 2 days.");
+  };
+  const handleRestoreSquad = async () => {
+    if (!isOwnerRole || !isArchived || isRestoring) return;
+    setIsRestoring(true);
+    const result = await restoreSquad(groupId).catch(() => null);
+    setIsRestoring(false);
+    if (!result?.ok) {
+      notify(result?.message ?? "Could not restore this squad.", "error");
+      return;
+    }
+    setGroup((current) => {
+      if (!current) return current;
+      const { archivedAt: _archivedAt, purgeAfter: _purgeAfter, archivedBy: _archivedBy, ...rest } = current;
+      return rest;
+    });
+    notify("Squad restored.");
+  };
   const handleRsvp = async (sessionId: string, status: "going" | "not_going") => {
+    if (isArchived) return;
     // Prevent double-click
     if (rsvpLoading.has(sessionId)) return;
     // Optimistic update
@@ -331,6 +387,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
       if (sList.length > 0) setSessions(sList);
     }, () => {});
     const unsubGroupDoc = watchGroupDoc(groupId, (g) => {
+      if (g) setGroup(g);
       setInviteCode(g?.inviteCode);
       const defaults = g?.rsvpDefaults;
       setRsvpDefaults({
@@ -586,6 +643,40 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
         </div>
       </section>
 
+      {isArchived && (
+        <section style={{
+          background: "var(--danger-bg)", border: "1px solid var(--danger)",
+          borderRadius: "var(--r-xl)", padding: "1rem 1.125rem",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: "1rem", flexWrap: "wrap",
+        }}>
+          <div>
+            <strong style={{ display: "block", color: "var(--danger)", fontWeight: 900 }}>
+              Archived squad · read-only
+            </strong>
+            <span style={{ display: "block", color: "var(--text-2)", fontSize: "0.8125rem", marginTop: "0.25rem" }}>
+              This squad and its history are scheduled for permanent deletion on {formatArchiveDeadline(group.purgeAfter)}.
+            </span>
+          </div>
+          {isOwnerRole && (
+            <button
+              type="button"
+              onClick={handleRestoreSquad}
+              disabled={isRestoring}
+              style={{
+                height: 42, padding: "0 1rem", border: "none",
+                borderRadius: "var(--r-md)", background: "var(--ink-800)",
+                color: "var(--volt-500)", fontWeight: 900,
+                cursor: isRestoring ? "default" : "pointer",
+                opacity: isRestoring ? 0.6 : 1,
+              }}
+            >
+              {isRestoring ? "Restoring..." : "Restore squad"}
+            </button>
+          )}
+        </section>
+      )}
+
       {/* Tab switcher */}
       <div style={{ display: "flex", gap: "0.5rem" }}>
         {(["members", "sessions"] as const).map((tab) => (
@@ -615,7 +706,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
             const upcomingSessions = sessions.filter(
               (s) => s.status === "scheduled" || s.status === "draft" || s.status === "active"
             );
-            if (upcomingSessions.length === 0) return null;
+            if (isArchived || upcomingSessions.length === 0) return null;
 
             return (
               <section style={{
@@ -693,7 +784,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                                 </span>
                                 <button
                                   type="button"
-                                  disabled={isLoading}
+                                  disabled={isLoading || isArchived}
                                   onClick={() => handleRsvp(s.id, "going")}
                                   style={{
                                     height: 32, padding: "0 0.875rem", border: myStatus === "going" ? "2px solid var(--volt-500)" : "2px solid transparent",
@@ -711,7 +802,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                                 </button>
                                 <button
                                   type="button"
-                                  disabled={isLoading}
+                                  disabled={isLoading || isArchived}
                                   onClick={() => handleRsvp(s.id, "not_going")}
                                   style={{
                                     height: 32, padding: "0 0.875rem",
@@ -746,6 +837,37 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
               </section>
             );
           })()}
+
+          {!isArchived && isOwnerRole && (
+            <section style={{
+              borderTop: "1px solid var(--border)", padding: "1rem 0 0.25rem",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: "1rem", flexWrap: "wrap",
+            }}>
+              <div>
+                <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900 }}>
+                  Archive this squad
+                </h2>
+                <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", marginTop: "0.2rem", maxWidth: 560 }}>
+                  Archive it to make the squad read-only now. All squad data will be permanently deleted after 2 days unless you restore it.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleArchiveSquad}
+                disabled={isArchiving}
+                style={{
+                  height: 42, padding: "0 1rem", border: "1px solid var(--danger)",
+                  borderRadius: "var(--r-md)", background: "transparent",
+                  color: "var(--danger)", fontWeight: 900,
+                  cursor: isArchiving ? "default" : "pointer",
+                  opacity: isArchiving ? 0.55 : 1,
+                }}
+              >
+                {isArchiving ? "Archiving..." : "Archive squad"}
+              </button>
+            </section>
+          )}
 
           <section style={{
             display: "flex",
@@ -866,7 +988,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                 <button onClick={handleCopyCode} style={{ height: 44, padding: "0 1rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer" }}>
                   {copiedCode ? "Copied!" : "Copy"}
                 </button>
-                {canManageGroup(role) && (
+                {canAdminister && (
                   <button onClick={handleRotateCode} disabled={rotating} style={{ height: 44, padding: "0 0.875rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", color: "var(--text-2)", fontWeight: 800, cursor: "pointer", fontSize: "0.8125rem" }}>
                     {rotating ? "…" : "New code"}
                   </button>
@@ -875,7 +997,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
             </section>
           )}
 
-          {canManageGroup(role) && (
+          {canAdminister && (
             <section style={{
               background: "var(--surface)", border: "1px solid var(--border)",
               borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
@@ -1310,7 +1432,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                   No members yet
                 </h3>
                 <p style={{ color: "var(--text-2)" }}>
-                  {canManageGroup(role)
+                  {canAdminister
                     ? "Add members above — they'll appear here once they sign up."
                     : "No members in this team yet."}
                 </p>
@@ -1483,7 +1605,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
           </section>
 
           {/* Venues section — organiser only */}
-          {canManageGroup(role) && (
+          {canAdminister && (
             <section style={{
               background: "var(--surface)", border: "1px solid var(--border)",
               borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)",
@@ -1596,7 +1718,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                   : "Your completed results and rankings will remain in the squad history."}
               </p>
             </div>
-            {canLeaveGroup(role) && (
+            {canLeaveGroup(role) && !isArchived && (
               <button
                 type="button"
                 onClick={handleLeaveSquad}
@@ -1721,19 +1843,25 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
 
                         <a
                           href={`/sessions/${s.id}/live`}
+                          onClick={(event) => {
+                            if (isArchived && s.status !== "completed" && s.status !== "cancelled") event.preventDefault();
+                          }}
                           style={{
                             height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
                             background: "var(--ink-800)", color: "var(--volt-500)",
                             fontWeight: 800, fontSize: "0.8125rem",
                             textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
+                            opacity: isArchived && s.status !== "completed" && s.status !== "cancelled" ? 0.55 : 1,
                           }}
                         >
-                          {s.status === "active" || s.status === "paused" ? "Run Session" : s.status === "completed" ? "View Results" : "Start Playing"}
+                          {isArchived && s.status !== "completed" && s.status !== "cancelled"
+                            ? "Read-only"
+                            : s.status === "active" || s.status === "paused" ? "Run Session" : s.status === "completed" ? "View Results" : "Start Playing"}
                         </a>
                       </div>
 
                       {/* RSVP Buttons for upcoming sessions */}
-                      {isUpcoming && (
+                      {isUpcoming && !isArchived && (
                         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", paddingTop: "0.5rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-3)" }}>
                             {currentUserPlayerKind === "casual" ? "Casual interest:" : "You're in by default:"}
@@ -1762,7 +1890,7 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                           >
                             {currentUserPlayerKind === "casual" ? "Not interested" : "I'm away"}
                           </button>
-                          {canManageGroup(role) && (
+                          {canAdminister && (
                             <button
                               type="button"
                               onClick={() => handleCancelSession(s.id, s.name)}

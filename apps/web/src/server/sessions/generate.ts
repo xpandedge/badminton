@@ -6,6 +6,7 @@ import { buildRound, createInitialState, seededOrder, DEFAULT_SEED } from "@pick
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 import { toEnginePlayers, toEngineCourts, buildMatchDocs, serializeEngineState } from "./scheduling";
 
 /**
@@ -24,6 +25,8 @@ export async function generateSchedule(
 
   const db = getAdminDb();
   const sessionRef = db.doc(`sessions/${sessionId}`);
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {

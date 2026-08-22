@@ -5,6 +5,7 @@ import { normalizeJoinCode, deriveWinner, type ScorePayload, type ScoringMode } 
 import { headers } from "next/headers";
 import { getAdminDb } from "@/server/firebase/admin";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 import { validatePayload, readAutoFillInputs, writeAutoFill } from "./scheduling";
 import { applySquadRatingForMatch } from "./squad-rating";
 
@@ -136,6 +137,8 @@ export async function submitScoreByLink(
     .get();
   if (sessionQuery.empty) return err("NOT_FOUND", "Invalid or disabled score link.");
   const sessionId = sessionQuery.docs[0]!.id;
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, "");
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {

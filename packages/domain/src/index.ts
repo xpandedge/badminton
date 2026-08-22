@@ -7,3 +7,4 @@ export * from "./rebalance-summary.js";
 export * from "./squad-rating.js";
 export * from "./session-rsvp.js";
 export * from "./sport.js";
+export * from "./squad-archive.js";

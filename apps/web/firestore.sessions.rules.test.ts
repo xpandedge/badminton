@@ -24,12 +24,22 @@ describe("Firestore Rules: Sessions", () => {
     await env.clearFirestore();
   });
 
-  async function setupGroupAndSession() {
+  async function setupGroupAndSession(archived = false) {
     await env.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
 
       // Setup group
-      await setDoc(doc(db, "groups/g1"), { name: "G1", memberIds: ["admin1", "org1", "mem1"] });
+      await setDoc(doc(db, "groups/g1"), {
+        name: "G1",
+        memberIds: ["admin1", "org1", "mem1"],
+        ...(archived
+          ? {
+              archivedAt: new Date(),
+              purgeAfter: new Date(Date.now() + 86_400_000),
+              archivedBy: "admin1",
+            }
+          : {}),
+      });
       await setDoc(doc(db, "groups/g1/members/admin1"), { userId: "admin1", role: "admin" });
       await setDoc(doc(db, "groups/g1/members/org1"), { userId: "org1", role: "organiser" });
       await setDoc(doc(db, "groups/g1/members/mem1"), { userId: "mem1", role: "member" });
@@ -74,6 +84,20 @@ describe("Firestore Rules: Sessions", () => {
       await setupGroupAndSession();
       const db = env.authenticatedContext("p1").firestore();
       await assertSucceeds(getDoc(doc(db, "sessions/s1")));
+    });
+
+    it("allows reads from an archived group's session during the retention window", async () => {
+      await setupGroupAndSession(true);
+      const db = env.authenticatedContext("mem1").firestore();
+      await assertSucceeds(getDoc(doc(db, "sessions/s1")));
+      await assertSucceeds(getDoc(doc(db, "sessions/s1/players/p1")));
+    });
+
+    it("blocks session creation and updates for an archived group", async () => {
+      await setupGroupAndSession(true);
+      const db = env.authenticatedContext("admin1").firestore();
+      await assertFails(setDoc(doc(db, "sessions/s2"), { groupId: "g1", name: "S2" }));
+      await assertFails(setDoc(doc(db, "sessions/s1"), { name: "Changed" }, { merge: true }));
     });
 
     it("denies random user to read session", async () => {

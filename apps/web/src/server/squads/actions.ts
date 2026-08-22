@@ -1,6 +1,6 @@
 "use server";
 import "server-only";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import {
   canAddGroupMember,
   canLeaveGroup,
@@ -10,14 +10,51 @@ import {
   canRemoveGroupMember,
   canTransferOwnership,
   generateJoinCode,
+  getSquadPurgeAfter,
+  getTimestampMillis,
+  isSquadArchived,
   type GroupRole,
   type SquadPlayerKind,
 } from "@picklebaddies/domain";
 import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import type { SquadAccess, SquadGroupData } from "./types";
 
 type AddableMemberRole = "member" | "admin";
+
+async function readSquadAccess(
+  db: FirebaseFirestore.Firestore,
+  squadId: string,
+  uid: string,
+): Promise<ActionResult<SquadAccess>> {
+  const groupRef = db.doc(`groups/${squadId}`);
+  const memberRef = db.doc(`groups/${squadId}/members/${uid}`);
+  const [groupSnap, memberSnap] = await Promise.all([groupRef.get(), memberRef.get()]);
+
+  if (!groupSnap.exists) return err("NOT_FOUND", "Squad not found");
+
+  const memberData = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }) : null;
+  return ok({
+    groupRef,
+    group: groupSnap.data() as SquadGroupData,
+    role: memberData?.role ?? null,
+  });
+}
+
+/** Reads the squad and caller membership, rejecting all archived-squad writes. */
+export async function requireActiveSquad(
+  db: FirebaseFirestore.Firestore,
+  squadId: string,
+  uid: string,
+): Promise<ActionResult<SquadAccess>> {
+  const access = await readSquadAccess(db, squadId, uid);
+  if (!access.ok) return access;
+  if (isSquadArchived(access.data.group)) {
+    return err("FAILED_PRECONDITION", "This squad is archived and read-only");
+  }
+  return access;
+}
 
 export interface SquadRsvpDefaultsInput {
   totalPlayers: number;
@@ -136,6 +173,68 @@ export async function createSquad(
   return ok(result);
 }
 
+// ── archive / restore ───────────────────────────────────────────────────────
+
+export async function archiveSquad(
+  squadId: string,
+): Promise<ActionResult<{ purgeAfter: number }>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!squadId) return err("INVALID_ARGUMENT", "Squad is required");
+
+  const db = getAdminDb();
+  const access = await readSquadAccess(db, squadId, session.uid);
+  if (!access.ok) return access;
+  if (!canManageAdmins(access.data.role)) {
+    return err("FORBIDDEN", "Only the squad owner can archive this squad");
+  }
+  if (isSquadArchived(access.data.group)) {
+    return err("FAILED_PRECONDITION", "This squad is already archived");
+  }
+
+  const purgeAfter = getSquadPurgeAfter();
+  await access.data.groupRef.update({
+    archivedAt: FieldValue.serverTimestamp(),
+    purgeAfter: Timestamp.fromMillis(purgeAfter),
+    archivedBy: session.uid,
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  });
+
+  return ok({ purgeAfter });
+}
+
+export async function restoreSquad(squadId: string): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!squadId) return err("INVALID_ARGUMENT", "Squad is required");
+
+  const db = getAdminDb();
+  const access = await readSquadAccess(db, squadId, session.uid);
+  if (!access.ok) return access;
+  if (!canManageAdmins(access.data.role)) {
+    return err("FORBIDDEN", "Only the squad owner can restore this squad");
+  }
+  if (!isSquadArchived(access.data.group)) {
+    return err("FAILED_PRECONDITION", "This squad is not archived");
+  }
+
+  const purgeAfter = getTimestampMillis(access.data.group.purgeAfter);
+  if (purgeAfter === null || purgeAfter <= Date.now()) {
+    return err("FAILED_PRECONDITION", "The squad restore window has expired");
+  }
+
+  await access.data.groupRef.update({
+    archivedAt: FieldValue.delete(),
+    purgeAfter: FieldValue.delete(),
+    archivedBy: FieldValue.delete(),
+    updatedAt: FieldValue.serverTimestamp(),
+    updatedBy: session.uid,
+  });
+
+  return ok(undefined);
+}
+
 // ── getOrCreateDefaultSquad ─────────────────────────────────────────────────
 // Lets a brand-new user reach session creation with zero setup: returns their
 // first squad if they have one, otherwise silently creates a personal one.
@@ -148,11 +247,12 @@ export async function getOrCreateDefaultSquad(): Promise<ActionResult<{ squadId:
   const existing = await db
     .collection("groups")
     .where("memberIds", "array-contains", session.uid)
-    .limit(1)
+    .limit(500)
     .get();
 
-  if (!existing.empty) {
-    return ok({ squadId: existing.docs[0]!.id });
+  const activeSquad = existing.docs.find((doc) => !isSquadArchived(doc.data()));
+  if (activeSquad) {
+    return ok({ squadId: activeSquad.id });
   }
 
   const auth = getAdminAuth();
@@ -178,6 +278,9 @@ export async function addMemberToSquad(
 
   const db = getAdminDb();
   const auth = getAdminAuth();
+
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
@@ -268,6 +371,9 @@ export async function addGuestPlayerToSquad(
 
   const db = getAdminDb();
 
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
+
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
   if (!canManageMembers(callerRole)) {
@@ -304,6 +410,8 @@ export async function addVenueToSquad(
   if (!name.trim()) return err("INVALID_ARGUMENT", "Venue name is required");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   const callerRole = await getMemberRole(db, squadId, session.uid);
   if (!canManageGroup(callerRole)) {
     return err("FORBIDDEN", "Only group owners and admins can add venues");
@@ -334,6 +442,8 @@ export async function addCourtToSquadVenue(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   const [callerRole, venueSnap] = await Promise.all([
     getMemberRole(db, squadId, session.uid),
     db.doc(`groups/${squadId}/venues/${venueId}`).get(),
@@ -401,6 +511,9 @@ export async function joinSquadByCode(code: string): Promise<ActionResult<{ squa
   const squadId = groupDoc.id;
   const name = (groupDoc.data() as any).name ?? "Squad";
 
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
+
   const memberSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   if (memberSnap.exists) return ok({ squadId, name }); // already a member — idempotent
 
@@ -438,6 +551,7 @@ export async function searchSquads(query: string): Promise<ActionResult<SquadSea
   const matches = snap.docs
     .map((d) => ({ id: d.id, data: d.data() as any }))
     .filter(({ data }) => {
+      if (isSquadArchived(data)) return false;
       const name = (data.nameLower ?? (data.name ?? "").toLowerCase()) as string;
       return name.includes(q);
     })
@@ -471,6 +585,9 @@ export async function requestToJoinSquad(squadId: string): Promise<ActionResult<
 
   const groupSnap = await db.doc(`groups/${squadId}`).get();
   if (!groupSnap.exists) return err("NOT_FOUND", "Squad not found");
+
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   const memberSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   if (memberSnap.exists) return ok({ status: "joined" }); // already in
@@ -512,6 +629,8 @@ export async function approveJoinRequest(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   if (!canManageMembers(await getMemberRole(db, squadId, session.uid))) {
     return err("FORBIDDEN", "Only group owners and admins can approve requests");
   }
@@ -534,6 +653,8 @@ export async function rejectJoinRequest(squadId: string, requesterId: string): P
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   if (!canManageMembers(await getMemberRole(db, squadId, session.uid))) {
     return err("FORBIDDEN", "Only group owners and admins can manage requests");
   }
@@ -549,6 +670,8 @@ export async function rotateInviteCode(squadId: string): Promise<ActionResult<{ 
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   const callerSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   const callerRole = callerSnap.exists ? (callerSnap.data() as { role?: GroupRole }).role ?? null : null;
   if (!canManageGroup(callerRole)) {
@@ -574,6 +697,8 @@ export async function updateSquadPlayerKind(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   const callerRole = await getMemberRole(db, squadId, session.uid);
   if (!canManageMembers(callerRole)) {
     return err("FORBIDDEN", "Only squad owners and admins can change player type");
@@ -599,6 +724,8 @@ export async function updateSquadRsvpDefaults(
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   const callerRole = await getMemberRole(db, squadId, session.uid);
   if (!canManageGroup(callerRole)) {
     return err("FORBIDDEN", "Only squad owners and admins can change RSVP defaults");
@@ -632,6 +759,8 @@ export async function updateMemberRole(
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -687,6 +816,8 @@ export async function transferSquadOwnership(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   try {
     await db.runTransaction(async (t) => {
       const groupRef = db.doc(`groups/${squadId}`);
@@ -765,6 +896,8 @@ export async function leaveSquad(squadId: string): Promise<ActionResult<void>> {
   if (!squadId) return err("INVALID_ARGUMENT", "Squad is required");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   try {
     await db.runTransaction(async (t) => {
       const groupRef = db.doc(`groups/${squadId}`);
@@ -900,6 +1033,8 @@ export async function removePlayerFromSquad(
   if (!session) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSquad(db, squadId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
   try {
     await db.runTransaction(async (t) => {
       const callerRef = db.doc(`groups/${squadId}/members/${session.uid}`);

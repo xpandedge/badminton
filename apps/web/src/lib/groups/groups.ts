@@ -6,7 +6,8 @@ import { httpsCallable } from "firebase/functions";
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { safeUnsubscribe } from "@/lib/realtime/watchWithFallback";
 import { type GroupMember, generateJoinCode } from "@picklebaddies/domain";
-import type { Group, GroupMemberDoc } from "./types";
+import { isSquadArchived } from "@picklebaddies/domain";
+import type { GroupDocument, GroupMemberDoc } from "./types";
 
 /** Watches all groups the given user is a member of. */
 export function watchUserGroups(
@@ -17,7 +18,9 @@ export function watchUserGroups(
   const { db } = getFirebaseServices();
   const q = query(collection(db, "groups"), where("memberIds", "array-contains", uid));
   const unsub = onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) })));
+    cb(snap.docs
+      .filter((d) => !isSquadArchived(d.data()))
+      .map((d) => ({ id: d.id, name: (d.data().name as string) })));
   }, onError);
   return () => safeUnsubscribe(unsub);
 }
@@ -44,10 +47,10 @@ export function watchAllGroups(
 /** One-shot read of a group document. */
 export async function getGroup(
   groupId: string,
-): Promise<{ name: string; description: string | null; groupInviteCode?: string } | null> {
+): Promise<GroupDocument | null> {
   const { db } = getFirebaseServices();
   const snap = await getDoc(doc(db, "groups", groupId));
-  return snap.exists() ? (snap.data() as { name: string; description: string | null; groupInviteCode?: string }) : null;
+  return snap.exists() ? (snap.data() as GroupDocument) : null;
 }
 
 /** Creates the group and writes the creator as owner (PRD §12.2). */
@@ -107,21 +110,12 @@ export function watchJoinRequests(
 /** Watches the group doc itself (name + live invite code). */
 export function watchGroupDoc(
   groupId: string,
-  cb: (data: {
-    name: string;
-    inviteCode?: string;
-    rsvpDefaults?: {
-      totalPlayers?: number;
-      casualConfirmedSlots?: number;
-      waitlistEnabled?: boolean;
-      cutoffHoursBeforeStart?: number | null;
-    };
-  } | null) => void,
+  cb: (data: GroupDocument | null) => void,
   onError?: (error: Error) => void,
 ): () => void {
   const { db } = getFirebaseServices();
   const unsub = onSnapshot(doc(db, "groups", groupId), (snap) => {
-    cb(snap.exists() ? (snap.data() as { name: string; inviteCode?: string }) : null);
+    cb(snap.exists() ? (snap.data() as GroupDocument) : null);
   }, onError);
   return () => safeUnsubscribe(unsub);
 }

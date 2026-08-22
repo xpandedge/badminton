@@ -95,6 +95,64 @@ describe("groups security rules", () => {
     await assertSucceeds(getDoc(doc(member, "groups", "group1")));
   });
 
+  it("allows normal owner updates but blocks archive metadata tampering", async () => {
+    const owner = env.authenticatedContext("owner1").firestore();
+    await assertSucceeds(
+      updateDoc(doc(owner, "groups", "group1"), { description: "Updated normally" })
+    );
+    await assertFails(
+      updateDoc(doc(owner, "groups", "group1"), { archivedAt: new Date() })
+    );
+    await assertFails(
+      updateDoc(doc(owner, "groups", "group1"), { purgeAfter: new Date(Date.now() + 86_400_000) })
+    );
+    await assertFails(
+      updateDoc(doc(owner, "groups", "group1"), { archivedBy: "owner1" })
+    );
+    await assertFails(
+      setDoc(doc(owner, "groups", "newGroupWithArchiveMetadata"), {
+        name: "Invalid",
+        createdBy: "owner1",
+        memberIds: ["owner1"],
+        archivedAt: new Date(),
+      })
+    );
+  });
+
+  it("allows archived group reads but blocks group and subcollection writes", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await updateDoc(doc(db, "groups", "group1"), {
+        archivedAt: new Date(),
+        purgeAfter: new Date(Date.now() + 86_400_000),
+        archivedBy: "owner1",
+      });
+      await setDoc(doc(db, "groups", "group1", "players", "player1"), { displayName: "Player" });
+      await setDoc(doc(db, "groups", "group1", "venues", "venue1"), { name: "Venue" });
+    });
+
+    const owner = env.authenticatedContext("owner1").firestore();
+    await assertSucceeds(getDoc(doc(owner, "groups", "group1")));
+    await assertSucceeds(getDoc(doc(owner, "groups", "group1", "members", "owner1")));
+    await assertSucceeds(getDoc(doc(owner, "groups", "group1", "players", "player1")));
+    await assertSucceeds(getDoc(doc(owner, "groups", "group1", "venues", "venue1")));
+    await assertFails(
+      updateDoc(doc(owner, "groups", "group1"), { description: "Archived update" })
+    );
+    await assertFails(
+      setDoc(doc(owner, "groups", "group1", "members", "newMember"), {
+        userId: "newMember",
+        role: "member",
+      })
+    );
+    await assertFails(
+      setDoc(doc(owner, "groups", "group1", "players", "player2"), { displayName: "Player 2" })
+    );
+    await assertFails(
+      setDoc(doc(owner, "groups", "group1", "venues", "venue1"), { name: "Changed" })
+    );
+  });
+
   it("allows owner to write members", async () => {
     const owner = env.authenticatedContext("owner1").firestore();
     await assertSucceeds(

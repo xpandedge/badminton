@@ -6,6 +6,7 @@ import { buildRound, seededOrder, DEFAULT_SEED } from "@picklebaddies/match-engi
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 import { toEnginePlayers, toEngineCourts, buildMatchDocs, serializeEngineState, buildEngineStateFromAssignments } from "./scheduling";
 
 type RebalanceTrigger = "manual_rebalance" | "player_added" | "player_removed" | "settings_changed";
@@ -32,6 +33,8 @@ export async function rebalanceSession(
 
   const db = getAdminDb();
   const sessionRef = db.doc(`sessions/${sessionId}`);
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {

@@ -5,6 +5,7 @@ import { canManageSessionPlayers, isSchedulable, isSkillLevel, type SessionPlaye
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
+import { requireActiveSessionSquad } from "./actions";
 
 /**
  * Adds any group player (including the caller themselves) to a session.
@@ -20,6 +21,8 @@ export async function addGroupMemberToSession(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -147,6 +150,8 @@ export async function updatePlayerStatus(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {
@@ -204,6 +209,8 @@ export async function addLatePlayer(
   const resolvedSkill = skillLevel === undefined ? "unknown" : isSkillLevel(skillLevel) ? skillLevel : "unknown";
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {
@@ -300,6 +307,8 @@ export async function markPlayerInjured(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {
@@ -367,6 +376,8 @@ export async function addGuestPlayerToSession(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     const result = await db.runTransaction(async (t) => {
@@ -446,6 +457,8 @@ export async function swapPlayers(
   }
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -563,6 +576,8 @@ export async function moveMatch(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {
@@ -625,6 +640,8 @@ export async function disableCourt(
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
   const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
 
   try {
     await db.runTransaction(async (t) => {

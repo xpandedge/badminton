@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- Brand surface, full bleed so the maskable crop never exposes a corner -->
+  <rect width="512" height="512" fill="#16241C"/>
+
+  <!-- Logo mark from apps/web/src/components/Logo.tsx, rest state.
+       Source viewBox is 0 0 120 120; scaled to 62% of the canvas and centred so
+       the artwork sits inside the maskable safe zone. -->
+  <g transform="translate(97.3 97.3) scale(2.6458)" fill="none">
+
+    <!-- Badminton racket (light, back) -->
+    <g transform="rotate(-34 60 86)">
+      <rect x="57" y="46" width="6" height="66" rx="3" fill="#E8F0EA"/>
+      <ellipse cx="60" cy="26" rx="16" ry="20" stroke="#E8F0EA" stroke-width="6" fill="none"/>
+    </g>
+
+    <!-- Pickleball paddle (lime, front) -->
+    <g transform="rotate(34 60 86)">
+      <rect x="57" y="46" width="6" height="66" rx="3" fill="#9BE870" stroke="#16241C" stroke-width="4"/>
+      <rect x="40" y="2" width="40" height="48" rx="11" fill="#9BE870" stroke="#16241C" stroke-width="4"/>
+    </g>
+
+    <!-- Shuttle -->
+    <g transform="rotate(-16 54 22) translate(8.1 4.65) scale(0.85)">
+      <path d="M48 36 C 45.5 27, 43.5 18, 41 11 L 67 11 C 64.5 18, 62.5 27, 60 36 A 8 8 0 0 0 48 36 Z" fill="#9BE870"/>
+      <circle cx="54" cy="45" r="7" fill="#9BE870"/>
+      <circle cx="51.3" cy="43.7" r="1.9" fill="#16241C"/>
+      <circle cx="56.7" cy="43.7" r="1.9" fill="#16241C"/>
+      <circle cx="54" cy="47.6" r="1.9" fill="#16241C"/>
+    </g>
+  </g>
+</svg>

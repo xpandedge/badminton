@@ -8,7 +8,12 @@ export const metadata: Metadata = {
   description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/icons/icon-192.png",
+    // SVG first so the tab icon stays crisp at any density; the PNG is the
+    // fallback for browsers that don't take an SVG favicon.
+    icon: [
+      { url: "/icons/icon.svg", type: "image/svg+xml" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
     apple: "/icons/icon-192.png",
   },
   openGraph: {

@@ -62,7 +62,7 @@ jobs:
         # Requires `Artifact Registry Admin` role on the service account.
         # Runs before deploy so a missing-permissions failure here doesn't mask deploy errors.
         # Safe to re-run; idempotent.
-        run: firebase functions:artifacts:setpolicy --project picklebaddies-85732 --force || true
+        run: firebase functions:artifacts:setpolicy --project picklebaddies-prod-e727d --force || true
 
       - name: Deploy (hosting + functions + rules + indexes)
-        run: firebase deploy --only hosting,functions,firestore --project picklebaddies-85732 --non-interactive --force
+        run: firebase deploy --only hosting,functions,firestore --project picklebaddies-prod-e727d --non-interactive --force

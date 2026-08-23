@@ -32,5 +32,5 @@
 ### Task 3: Verify and release
 
 - [x] Run functions and web typechecks/tests and build functions; local packaging was blocked only by Windows symlink permissions after successful compilation.
-- [ ] Run the one-off cleanup against production after deployment and confirm no new scheduled function was added.
+- [x] Run the one-off cleanup against production after deployment and confirm no new scheduled function was added.
 - [ ] Commit, push, deploy Vercel/Firebase, and verify the workflow.

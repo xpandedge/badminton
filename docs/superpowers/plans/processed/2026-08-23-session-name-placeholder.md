@@ -21,4 +21,4 @@
 
 - [x] Run web typecheck and tests.
 - [x] Run the production build; compilation and static generation pass, while the local Windows standalone trace is blocked by symlink permissions.
-- [ ] Review the diff, commit, push, deploy Vercel, and verify the Firebase workflow.
+- [x] Review the diff, commit, push, deploy Vercel, and verify the Firebase workflow.

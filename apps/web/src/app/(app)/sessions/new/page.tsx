@@ -4,26 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createSession } from "@/server/sessions/actions";
 import { getOrCreateDefaultSquad } from "@/server/squads/actions";
-import { getSportConfig } from "@picklebaddies/domain";
+import { SPORTS, getSportConfig, type Sport } from "@picklebaddies/domain";
 import { watchUserGroups } from "@/lib/groups/groups";
 import { watchVenues, watchCourts } from "@/lib/groups/venues";
 import { useAuth } from "@/lib/auth/useAuth";
 import { useSportPreference } from "@/lib/sport/SportPreferenceContext";
 
 const ESTIMATED_GAME_MINUTES = 15;
-const SPORT_CHOICES = [
-  {
-    value: "pickleball",
-    label: "Pickleball",
-    detail: "Games usually target 11 points.",
-  },
-  {
-    value: "badminton",
-    label: "Badminton",
-    detail: "Games usually target 21 points.",
-  },
-] as const;
-
 export default function NewSessionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -39,7 +26,7 @@ export default function NewSessionPage() {
   const [courtsText, setCourtsText] = useState("Court 1\nCourt 2");
 
   const [name, setName] = useState("");
-  const [sport, setSport] = useState<"badminton" | "pickleball">("pickleball");
+  const [sport, setSport] = useState<Sport>("pickleball");
   const [durationMinutes, setDurationMinutes] = useState(90);
   const [scheduledTime, setScheduledTime] = useState("");
   const [scoringMode, setScoringMode] = useState<"winner_only" | "points">("points");
@@ -109,8 +96,7 @@ export default function NewSessionPage() {
 
   const selectedGroupName = groups.find((g) => g.id === groupId)?.name ?? "—";
   const canCreate = !!user && !!groupId && !!venueName.trim() && courtNames.length > 0 && !!name.trim() && !isSubmitting;
-  const selectedSport = SPORT_CHOICES.find((item) => item.value === sport) ?? SPORT_CHOICES[0];
-  const sportLabel = selectedSport.label;
+  const sportLabel = SPORTS[sport].label;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -361,7 +347,7 @@ export default function NewSessionPage() {
                   )}
                 </div>
                 <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", lineHeight: 1.4, marginTop: "0.25rem" }}>
-                  {selectedSport.detail} Change your sport default only when this session is for a different sport.
+                  Set the scoring style below for this session. Change your sport default only when this session is for a different sport.
                 </p>
               </div>
               <button

@@ -9,12 +9,13 @@ import { SportPreferenceProvider, useSportPreference } from "@/lib/sport/SportPr
 import { SportPickerModal } from "@/components/SportPickerModal";
 import { Logo } from "@/components/Logo";
 import { PlayerNameDialog } from "@/components/PlayerNameDialog";
+import { SPORTS } from "@picklebaddies/domain";
 
 function SportBadge() {
   const { sport, isLoaded, openPicker } = useSportPreference();
   if (!isLoaded || !sport) return null;
 
-  const label = sport === "pickleball" ? "Pickleball" : "Badminton";
+  const label = SPORTS[sport].label;
   return (
     <button
       onClick={openPicker}
@@ -28,8 +29,8 @@ function SportBadge() {
         padding: "4px 9px",
         borderRadius: "var(--r-pill)",
         border: "1.5px solid var(--border)",
-        background: sport === "pickleball" ? "var(--volt-500)" : "var(--ink-800)",
-        color: sport === "pickleball" ? "var(--ink-800)" : "var(--volt-500)",
+        background: "var(--volt-500)",
+        color: "var(--ink-800)",
         cursor: "pointer",
         lineHeight: 1.4,
       }}

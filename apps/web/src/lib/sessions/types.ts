@@ -1,4 +1,4 @@
-import type { ScoringMode, SessionFormat, SessionStatus, SessionPlayerStatus, SkillLevel } from "@picklebaddies/domain";
+import type { ScoringMode, SessionFormat, SessionStatus, SessionPlayerStatus, SkillLevel, Sport } from "@picklebaddies/domain";
 
 export interface SessionCourt {
   courtId: string;
@@ -12,7 +12,7 @@ export interface Session {
   venueId: string | null;
   venueName: string;
   name: string;
-  sport: "badminton" | "pickleball";
+  sport: Sport;
   status: SessionStatus;
   startsAt: unknown;
   durationMinutes: number;

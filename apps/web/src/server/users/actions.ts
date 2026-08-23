@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { type Sport } from "@picklebaddies/domain";
+import { isSport, SPORT_OPTIONS, type Sport } from "@picklebaddies/domain";
 import { normalizePlayerDisplayName } from "@/lib/auth/display-name";
 import { getAdminAuth, getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
@@ -57,8 +57,8 @@ export async function setSportPreference(sport: Sport): Promise<ActionResult<voi
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
-  if (sport !== "badminton" && sport !== "pickleball") {
-    return err("INVALID_ARGUMENT", "sport must be badminton or pickleball");
+  if (!isSport(sport)) {
+    return err("INVALID_ARGUMENT", `sport must be one of: ${SPORT_OPTIONS.join(", ")}`);
   }
 
   await getAdminDb()

@@ -8,6 +8,8 @@ import {
   canManageGroup,
   canManageSessionPlayers,
   getSportConfig,
+  isSport,
+  SPORT_OPTIONS,
   type GroupRole,
   type Sport,
   type ScoringMode,
@@ -137,6 +139,9 @@ export async function createSession(
   }
   if (courts.length === 0) {
     return err("INVALID_ARGUMENT", "At least one court is required");
+  }
+  if (!isSport(sport)) {
+    return err("INVALID_ARGUMENT", `sport must be one of: ${SPORT_OPTIONS.join(", ")}`);
   }
   // Players can be added after creation; just validate format if provided
   if (players.length > 0 && players.some((p) => !p.playerId || !p.displayName)) {

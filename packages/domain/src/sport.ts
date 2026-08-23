@@ -1,7 +1,5 @@
 import type { ScoringMode } from "./scoring.js";
 
-export type Sport = "badminton" | "pickleball";
-
 export interface SportConfig {
   label: string;
   defaultScoringMode: ScoringMode;
@@ -12,7 +10,7 @@ export interface SportConfig {
   };
 }
 
-export const SPORTS: Record<Sport, SportConfig> = {
+export const SPORTS = {
   badminton: {
     label: "Badminton",
     defaultScoringMode: "points",
@@ -25,7 +23,33 @@ export const SPORTS: Record<Sport, SportConfig> = {
     defaultTargetScore: 11,
     terms: { game: "game", court: "court" },
   },
-};
+  squash: {
+    label: "Squash",
+    defaultScoringMode: "points",
+    defaultTargetScore: 11,
+    terms: { game: "game", court: "court" },
+  },
+  table_tennis: {
+    label: "Table tennis",
+    defaultScoringMode: "points",
+    defaultTargetScore: 11,
+    terms: { game: "game", court: "table" },
+  },
+  tennis: {
+    label: "Tennis",
+    defaultScoringMode: "points",
+    defaultTargetScore: 6,
+    terms: { game: "game", court: "court" },
+  },
+} as const satisfies Record<string, SportConfig>;
+
+export type Sport = keyof typeof SPORTS;
+
+export const SPORT_OPTIONS = Object.keys(SPORTS) as Sport[];
+
+export function isSport(value: string): value is Sport {
+  return Object.prototype.hasOwnProperty.call(SPORTS, value);
+}
 
 export function getSportConfig(sport: Sport): SportConfig {
   return SPORTS[sport];

@@ -2,7 +2,7 @@ import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, onSnapshot, q
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { generateJoinCode } from "@picklebaddies/domain";
 import type { Session, SessionCourt, SessionPlayer } from "./types";
-import type { SkillLevel } from "@picklebaddies/domain";
+import type { SkillLevel, Sport } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { safeUnsubscribe, watchWithFallback } from "@/lib/realtime/watchWithFallback";
 
@@ -11,7 +11,7 @@ export interface CreateSessionInput {
   venueName: string;
   courtNames: string[];
   name: string;
-  sport: "badminton" | "pickleball";
+  sport: Sport;
   startsAt: Date;
   durationMinutes: number;
   estimatedGameMinutes: number;
@@ -129,7 +129,7 @@ export async function updateSessionDraft(sessionId: string, updates: Partial<Ses
 export type SessionSummary = {
   id: string;
   name: string;
-  sport: "badminton" | "pickleball";
+  sport: Sport;
   status: string;
   startsAt: unknown;
   venueName: string;

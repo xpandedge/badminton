@@ -5,7 +5,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { setSportPreference } from "@/server/users/actions";
 import { useAuth } from "@/lib/auth/useAuth";
-import type { Sport } from "@picklebaddies/domain";
+import { isSport, type Sport } from "@picklebaddies/domain";
 
 interface SportPreferenceState {
   sport: Sport | null;
@@ -45,7 +45,8 @@ export function SportPreferenceProvider({ children }: { children: React.ReactNod
 
     const unsub = onSnapshot(ref, (snap) => {
       if (snap.exists()) {
-        const pref = snap.data()?.sportPreference as Sport | undefined;
+        const rawPref = snap.data()?.sportPreference;
+        const pref = typeof rawPref === "string" && isSport(rawPref) ? rawPref : null;
         setSportState(pref ?? null);
         setIsLoaded(true);
         // Show picker only if preference has never been set

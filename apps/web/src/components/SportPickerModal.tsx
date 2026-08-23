@@ -1,33 +1,45 @@
 "use client";
 
 import { useSportPreference } from "@/lib/sport/SportPreferenceContext";
-import type { Sport } from "@picklebaddies/domain";
+import { SPORT_OPTIONS, SPORTS as SPORT_CONFIGS, type Sport } from "@picklebaddies/domain";
 
-const SPORTS: Array<{
-  id: Sport;
-  label: string;
-  target: string;
+const SPORT_CARD_COPY: Record<Sport, {
   tagline: string;
   accentColor: string;
   textColor: string;
-}> = [
-  {
-    id: "pickleball",
-    label: "Pickleball",
-    target: "11 pts",
+}> = {
+  pickleball: {
     tagline: "Fast rallies. Fair rotations. Easy scores.",
     accentColor: "var(--volt-500)",
     textColor: "var(--ink-800)",
   },
-  {
-    id: "badminton",
-    label: "Badminton",
-    target: "21 pts",
+  badminton: {
     tagline: "Big courts. Big smashes. Big rallies.",
     accentColor: "var(--ink-800)",
     textColor: "var(--volt-500)",
   },
-];
+  squash: {
+    tagline: "Tight walls. Quick changes. Clean rotations.",
+    accentColor: "#38E0C2",
+    textColor: "var(--ink-800)",
+  },
+  table_tennis: {
+    tagline: "Sharp rallies. Fast tables. Easy turns.",
+    accentColor: "#FFDA5A",
+    textColor: "var(--ink-800)",
+  },
+  tennis: {
+    tagline: "Court time, partners, and results in one place.",
+    accentColor: "#F6F8F4",
+    textColor: "var(--ink-800)",
+  },
+};
+
+const SPORT_CARDS = SPORT_OPTIONS.map((id) => ({
+  id,
+  label: SPORT_CONFIGS[id].label,
+  ...SPORT_CARD_COPY[id],
+}));
 
 export function SportPickerModal() {
   const { showPicker, sport: currentSport, setSport, closePicker, isLoaded } = useSportPreference();
@@ -59,7 +71,9 @@ export function SportPickerModal() {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: 480,
+          maxWidth: 720,
+          maxHeight: "calc(100dvh - 3rem)",
+          overflowY: "auto",
           display: "flex",
           flexDirection: "column",
           gap: "1.5rem",
@@ -96,8 +110,8 @@ export function SportPickerModal() {
         </div>
 
         {/* Sport cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.875rem" }}>
-          {SPORTS.map((s) => {
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.875rem" }}>
+          {SPORT_CARDS.map((s) => {
             const isSelected = currentSport === s.id;
             return (
               <button
@@ -138,16 +152,6 @@ export function SportPickerModal() {
                     </svg>
                   </div>
                 )}
-
-                <div style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "0.5625rem",
-                  letterSpacing: "0.12em",
-                  textTransform: "uppercase",
-                  opacity: 0.65,
-                }}>
-                  up to {s.target}
-                </div>
 
                 <div style={{
                   fontFamily: "var(--font-display)",

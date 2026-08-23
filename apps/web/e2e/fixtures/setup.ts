@@ -1,4 +1,5 @@
 import { type Page, expect } from "@playwright/test";
+import type { Sport } from "@picklebaddies/domain";
 
 /** Create a squad from the groups page; returns the squad id from the resulting URL. */
 export async function createSquad(page: Page, name: string): Promise<string> {
@@ -29,7 +30,7 @@ export interface SessionOpts {
   name: string;
   venue: string;
   courts: string[];
-  sport?: "badminton" | "pickleball";
+  sport?: Sport;
 }
 
 /** Create a session in a squad; returns the session id (lands on the detail page). */

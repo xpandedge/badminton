@@ -210,6 +210,7 @@ export async function submitScoreByLink(
         status: "completed",
         isLocked: true,
         completedAt: FieldValue.serverTimestamp(),
+        squadRatingAppliedAt: FieldValue.serverTimestamp(),
       });
       for (let i = 0; i < allPlayerIds.length; i++) {
         t.set(playerRefs[i]!, updateStats(playerDocs[i]?.data(), allPlayerIds[i]!), { merge: true });

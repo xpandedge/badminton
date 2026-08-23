@@ -140,6 +140,7 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
         status: "completed",
         isLocked: true,
         completedAt: isEdit ? (match.completedAt ?? FieldValue.serverTimestamp()) : FieldValue.serverTimestamp(),
+        ...(isEdit ? {} : { squadRatingAppliedAt: FieldValue.serverTimestamp() }),
         ...(isEdit ? {
           scoreEditedAt: FieldValue.serverTimestamp(),
           scoreEditedBy: user.uid,

@@ -22,6 +22,7 @@ import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 import { toPlain } from "@/server/lib/serialize";
 import { requireActiveSquad } from "@/server/squads/actions";
+import { reconcileSquadRatingsForSession } from "./squad-rating";
 
 export async function requireActiveSessionSquad(
   db: FirebaseFirestore.Firestore,
@@ -255,6 +256,10 @@ export async function updateSessionStatus(
   if (!activeSquad.ok) return activeSquad;
 
   try {
+    if (statusTo === "completed") {
+      await reconcileSquadRatingsForSession(db, sessionId);
+    }
+
     await db.runTransaction(async (t) => {
       const sessionRef = db.doc(`sessions/${sessionId}`);
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a signed-in support form that emails `sanju36@gmail.com` without exposing the recipient or SMTP credentials to users.
+**Goal:** Add a signed-in support form that sends from `xpandedge@gmail.com` to `sanju36@gmail.com` without exposing the recipient or SMTP credentials to users.
 
 **Architecture:** The existing Help page and bottom navigation gain a Support form/link. A server-only Next.js action verifies the Firebase session, validates the payload, checks the existing Firestore-backed rate limiter, and sends through Gmail SMTP using Nodemailer. The recipient is a server-only constant and user identity comes from the verified session.
 

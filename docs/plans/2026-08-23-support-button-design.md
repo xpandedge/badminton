@@ -4,7 +4,7 @@
 
 ## Goal
 
-Give signed-in DuoRally users a clear way to submit a support question from inside the app. The message is sent server-side to `sanju36@gmail.com`; the destination address is never rendered in client code.
+Give signed-in DuoRally users a clear way to submit a support question from inside the app. The message is sent server-side from `xpandedge@gmail.com` to `sanju36@gmail.com`; the destination address is never rendered in client code.
 
 ## Chosen Approach
 

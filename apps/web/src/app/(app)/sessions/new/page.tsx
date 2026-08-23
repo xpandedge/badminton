@@ -26,7 +26,7 @@ export default function NewSessionPage() {
   const [venueName, setVenueName] = useState("");
   const [courtsText, setCourtsText] = useState("Court 1\nCourt 2");
 
-  const [name, setName] = useState("Saturday Social");
+  const [name, setName] = useState("");
   const [sport, setSport] = useState<"badminton" | "pickleball">("pickleball");
   const [durationMinutes, setDurationMinutes] = useState(90);
   const [scheduledTime, setScheduledTime] = useState("");
@@ -302,7 +302,7 @@ export default function NewSessionPage() {
 
           <label style={{ display: "grid", gap: "0.4rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Session name</span>
-            <input data-testid="session-name-input" className="pb-input" value={name} onChange={e => setName(e.target.value)} required />
+            <input data-testid="session-name-input" className="pb-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Saturday Social · 24 Aug, 6:30 PM" required />
           </label>
 
           {/* Sport */}

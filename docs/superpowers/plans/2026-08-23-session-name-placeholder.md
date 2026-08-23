@@ -13,12 +13,12 @@
 **Files:**
 - Modify: `apps/web/src/app/(app)/sessions/new/page.tsx`
 
-- [ ] Start `name` as an empty string.
-- [ ] Add the approved name/date/time example as the input placeholder.
-- [ ] Preserve the existing required attribute, `canCreate` guard, and server validation.
+- [x] Start `name` as an empty string.
+- [x] Add the approved name/date/time example as the input placeholder.
+- [x] Preserve the existing required attribute, `canCreate` guard, and server validation.
 
 ### Task 2: Verify and release
 
-- [ ] Run web typecheck and tests.
-- [ ] Run the production build or record the local Windows symlink limitation if it recurs after successful compilation.
+- [x] Run web typecheck and tests.
+- [x] Run the production build; compilation and static generation pass, while the local Windows standalone trace is blocked by symlink permissions.
 - [ ] Review the diff, commit, push, deploy Vercel, and verify the Firebase workflow.

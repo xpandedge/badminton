@@ -26,15 +26,15 @@
 - Consumes: existing `BoardData`, `deriveViewerState`, `courtCurrentMatch`, `benchPlayers`, and current board state.
 - Produces: the same board content with session-aligned visual hierarchy.
 
-- [ ] **Step 1: Update the board hero**
+- [x] **Step 1: Update the board hero**
 
 Use the existing dark patterned header style from the session console, retain the session name, sport label, status pill, and player picker, and keep a constrained `maxWidth` that works on phones and desktop.
 
-- [ ] **Step 2: Update live court and personal-state surfaces**
+- [x] **Step 2: Update live court and personal-state surfaces**
 
 Give current courts, the personalized hero, up-next state, bench state, and completed-session message consistent borders, radius, spacing, and status emphasis. Keep the existing `mine` highlight and all current text/data.
 
-- [ ] **Step 3: Update the leaderboard panel**
+- [x] **Step 3: Update the leaderboard panel**
 
 Use a session-style dense row layout with a stronger panel header, stable rank/name/stat columns, highlighted selected player, and no clipped long names. Preserve the winner-only and points-mode column behavior.
 
@@ -43,14 +43,14 @@ Use a session-style dense row layout with a stronger panel header, stable rank/n
 **Files:**
 - Verify: `apps/web/src/app/board/[code]/page.tsx`
 
-- [ ] **Step 1: Run checks**
+- [x] **Step 1: Run checks**
 
 Run `corepack pnpm@9.15.9 --filter @picklebaddies/web typecheck`, `corepack pnpm@9.15.9 --filter @picklebaddies/web test`, and `corepack pnpm@9.15.9 --filter @picklebaddies/web build`. Expected: all pass.
 
-- [ ] **Step 2: Review the diff**
+- [x] **Step 2: Review the diff**
 
 Run `git diff --check` and confirm only the board presentation and approved plan/design documents changed.
 
-- [ ] **Step 3: Commit and deploy**
+- [x] **Step 3: Commit and deploy**
 
 Commit with `git commit -m "Align public score board with session design"`, push `main`, deploy the linked Vercel production project, and verify the Firebase workflow for the pushed commit.

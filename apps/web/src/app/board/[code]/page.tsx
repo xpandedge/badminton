@@ -130,17 +130,20 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
   return (
     <div style={{ minHeight: "100dvh", background: "var(--bg)", paddingBottom: "2.5rem" }}>
       {/* Header */}
-      <header style={{ background: "var(--ink-800)", padding: "1.15rem 1.15rem 1rem", position: "relative", overflow: "hidden" }}>
+      <header style={{ background: "var(--ink-800)", maxWidth: 900, margin: "0.75rem auto 0", borderRadius: "var(--r-2xl)", padding: "1.35rem 1.25rem 1.15rem", position: "relative", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
         <div aria-hidden="true" style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(45deg, rgba(198,241,53,0.055) 0 1px, transparent 1px 18px), repeating-linear-gradient(-45deg, rgba(198,241,53,0.055) 0 1px, transparent 1px 18px)", pointerEvents: "none" }} />
-        <div style={{ position: "relative", maxWidth: 520, margin: "0 auto" }}>
+        <div style={{ position: "relative", maxWidth: 760, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.75rem" }}>
             <div style={{ minWidth: 0 }}>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                {titleCase(data.sport)} · live board
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 9px", borderRadius: "var(--r-pill)", background: "var(--volt-500)", color: "var(--ink-800)", fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                {titleCase(data.sport)} · score board
               </span>
-              <h1 style={{ fontFamily: "var(--font-display)", fontSize: "1.5rem", fontWeight: 900, color: "var(--n-50)", textTransform: "uppercase", letterSpacing: "-0.025em", marginTop: "0.2rem", overflowWrap: "anywhere" }}>
+              <h1 style={{ fontFamily: "var(--font-display)", fontSize: "clamp(1.8rem, 5vw, 2.75rem)", lineHeight: 1, fontWeight: 900, color: "var(--n-50)", textTransform: "uppercase", letterSpacing: "-0.025em", marginTop: "0.65rem", overflowWrap: "anywhere" }}>
                 {data.sessionName}
               </h1>
+              <p style={{ color: "rgba(246,248,244,0.62)", fontSize: "0.875rem", marginTop: "0.4rem" }}>
+                Follow the courts and your place in the session.
+              </p>
             </div>
             <span style={{ display: "inline-flex", flexShrink: 0, padding: "4px 10px", borderRadius: "var(--r-pill)", background: isLive ? "var(--volt-500)" : "rgba(246,248,244,0.12)", color: isLive ? "var(--ink-800)" : "var(--n-50)", fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>
               {isLive ? "● Playing now" : formatSessionStatus(data.sessionStatus)}
@@ -190,7 +193,7 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
         </div>
       </header>
 
-      <main style={{ maxWidth: 520, margin: "0 auto", padding: "1rem 1.15rem", display: "grid", gap: "0.85rem" }}>
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "1rem 1.15rem", display: "grid", gap: "0.9rem" }}>
 
         {!isLive && (
           <div style={{ background: "var(--surface)", border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "2rem 1.25rem", textAlign: "center" }}>
@@ -208,12 +211,15 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
         {/* Courts */}
         {isLive && (
           <>
-            <SectionLabel>On court now</SectionLabel>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+              <SectionLabel>On court now</SectionLabel>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>{data.courts.length} {data.courts.length === 1 ? "court" : "courts"}</span>
+            </div>
             {data.courts.map((court) => {
               const m = courtCurrentMatch(data.matches, court.courtId);
               const mine = m && meId ? m.teamA.concat(m.teamB).some((p) => p.playerId === meId) : false;
               return (
-                <div key={court.courtId} style={{ border: mine ? "2px solid var(--volt-500)" : "1px solid var(--border)", background: mine ? "rgba(198,241,53,0.10)" : "var(--surface)", borderRadius: "var(--r-lg)", padding: "0.85rem 0.95rem", boxShadow: "var(--shadow-sm)" }}>
+                <div key={court.courtId} style={{ border: mine ? "2px solid var(--volt-500)" : "1px solid var(--border)", background: mine ? "rgba(198,241,53,0.12)" : "var(--surface)", borderRadius: "var(--r-xl)", padding: "1rem 1.05rem", boxShadow: "var(--shadow-sm)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: m ? "0.5rem" : 0 }}>
                     <span style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900, letterSpacing: "-0.02em" }}>{court.courtName}</span>
                     {m ? (
@@ -230,7 +236,7 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
             })}
 
             {/* Bench */}
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", background: "var(--warning-bg)", borderRadius: "var(--r-md)", padding: "0.65rem 0.8rem" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", background: "var(--warning-bg)", border: "1px solid rgba(217,147,24,0.22)", borderRadius: "var(--r-lg)", padding: "0.7rem 0.85rem" }}>
               <span style={{ fontSize: "1rem", lineHeight: 1 }}>🪑</span>
               <div style={{ fontSize: "0.8125rem", color: "#8a5a08" }}>
                 <b>On the bench:</b> {bench.length ? bench.map((p) => p.displayName).join(", ") : "nobody — everyone's on."}
@@ -241,19 +247,31 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
 
         {/* Leaderboard */}
         {data.leaderboard.length > 0 && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "0.9rem 1rem", boxShadow: "var(--shadow-sm)" }}>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "0.5rem" }}>Leaderboard</div>
+          <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-2xl)", padding: "1rem 1.05rem", boxShadow: "var(--shadow-sm)" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "0.75rem", marginBottom: "0.7rem" }}>
+              <div>
+                <SectionLabel>Standings</SectionLabel>
+                <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.35rem", lineHeight: 1, fontWeight: 900, letterSpacing: "-0.02em", marginTop: "0.35rem" }}>Leaderboard</h2>
+              </div>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{Math.min(data.leaderboard.length, 12)} players</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "2rem minmax(0, 1fr) 3.25rem 4.5rem", gap: "0.6rem", padding: "0 0.15rem 0.35rem", fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+              <span>#</span>
+              <span>Player</span>
+              <span style={{ textAlign: "right" }}>Wins</span>
+              <span style={{ textAlign: "right" }}>{data.scoringMode === "points" ? "Diff" : "Games"}</span>
+            </div>
             {data.leaderboard.slice(0, 12).map((row, i) => {
               const mine = row.playerId === meId;
               return (
-                <div key={row.playerId} style={{ display: "grid", gridTemplateColumns: "22px 1fr auto auto", gap: "0.6rem", alignItems: "center", padding: "0.5rem 0", borderBottom: i === Math.min(data.leaderboard.length, 12) - 1 ? "none" : "1px solid var(--border)" }}>
-                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--text-3)", fontSize: "0.8125rem" }}>{i + 1}</span>
-                  <span style={{ fontWeight: mine ? 900 : 700, color: mine ? "var(--volt-600)" : "var(--text-1)", fontSize: "0.875rem" }}>{row.displayName}{mine ? " (you)" : ""}</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>{row.wins}W</span>
+                <div key={row.playerId} style={{ display: "grid", gridTemplateColumns: "2rem minmax(0, 1fr) 3.25rem 4.5rem", gap: "0.6rem", alignItems: "center", padding: "0.7rem 0.15rem", borderBottom: i === Math.min(data.leaderboard.length, 12) - 1 ? "none" : "1px solid var(--border)", background: mine ? "rgba(198,241,53,0.11)" : "transparent", borderRadius: mine ? "var(--r-md)" : 0 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 900, color: i === 0 ? "var(--volt-600)" : "var(--text-3)", fontSize: "0.8125rem" }}>{i + 1}</span>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: mine ? 900 : 700, color: mine ? "var(--volt-600)" : "var(--text-1)", fontSize: "0.9rem" }}>{row.displayName}{mine ? " (you)" : ""}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)", textAlign: "right" }}>{row.wins}W</span>
                   {data.scoringMode === "points" ? (
-                    <span style={{ fontWeight: 800, fontSize: "0.875rem" }}>{row.pointDifference > 0 ? `+${row.pointDifference}` : row.pointDifference}</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontWeight: 900, fontSize: "0.875rem", textAlign: "right", color: row.pointDifference > 0 ? "var(--volt-600)" : row.pointDifference < 0 ? "var(--danger)" : "var(--text-1)" }}>{row.pointDifference > 0 ? `+${row.pointDifference}` : row.pointDifference}</span>
                   ) : (
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)" }}>{row.gamesPlayed}G</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)", textAlign: "right" }}>{row.gamesPlayed}G</span>
                   )}
                 </div>
               );

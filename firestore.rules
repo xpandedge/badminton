@@ -15,24 +15,8 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
-    function isSuperAdminToken() {
-      return signedIn() &&
-        request.auth.token.email in [
-          "pankaj4bharat@gmail.com",
-          "sanju36@gmail.com"
-        ];
-    }
-    function isSuperAdminProfile() {
-      // Guard: doc may not exist; field may be absent — use .get() to avoid eval errors.
-      return signedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('emailLower', '') in [
-          "pankaj4bharat@gmail.com",
-          "sanju36@gmail.com"
-        ];
-    }
     function isSuperAdmin() {
-      return isSuperAdminToken() || isSuperAdminProfile();
+      return signedIn() && request.auth.token.superAdmin == true;
     }
     function isGroupActive(groupId) {
       return exists(/databases/$(database)/documents/groups/$(groupId)) &&
@@ -60,7 +44,18 @@ service cloud.firestore {
     // Users can read/write only their own profile (PRD §19.1).
     match /users/{userId} {
       allow read: if (signedIn() && request.auth.uid == userId) || isSuperAdmin();
-      allow write: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && !request.resource.data.keys().hasAny(["role", "superAdmin", "appAdminRole"]);
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "email",
+          "emailLower",
+          "role",
+          "superAdmin",
+          "appAdminRole"
+        ]);
     }
 
     // Global player identity + stats — written only by the server tier (D8).
@@ -72,6 +67,14 @@ service cloud.firestore {
 
     // Rate-limit buckets — server-tier internal, never client-accessible.
     match /_rateLimits/{docId} {
+      allow read, write: if false;
+    }
+
+    match /_adminAuditLogs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /_appAdmins/{docId} {
       allow read, write: if false;
     }
 

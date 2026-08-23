@@ -5,18 +5,19 @@ import type { SessionStatus } from "./session-status.js";
 /** Stored group role. `organiser` remains for legacy Firestore records. */
 export type GroupRole = "owner" | "admin" | "member" | "organiser";
 export type ActiveGroupRole = Exclude<GroupRole, "organiser">;
+export type AppAdminRole = "owner" | "admin";
 
 /** How a person participates in a session. This is not a permission role. */
 export type ParticipantType = "registered_user" | "guest";
 
-export const SUPER_ADMIN_EMAILS = [
-  "pankaj4bharat@gmail.com",
-  "sanju36@gmail.com",
-] as const;
-
 export interface GroupMember {
   userId: string;
   role: GroupRole;
+}
+
+export interface SuperAdminClaims {
+  superAdmin?: unknown;
+  appAdminRole?: unknown;
 }
 
 export function resolveGroupRole(
@@ -36,11 +37,16 @@ export function groupRoleLabel(role: GroupRole | null): "Owner" | "Admin" | "Mem
   return normalized === "owner" ? "Owner" : normalized === "admin" ? "Admin" : "Member";
 }
 
-export function isSuperAdminEmail(email: string | null | undefined): boolean {
-  if (!email) return false;
-  return SUPER_ADMIN_EMAILS.includes(
-    email.trim().toLowerCase() as (typeof SUPER_ADMIN_EMAILS)[number],
-  );
+export function isSuperAdminClaim(claims: SuperAdminClaims | null | undefined): boolean {
+  return claims?.superAdmin === true;
+}
+
+export function getAppAdminRole(claims: SuperAdminClaims | null | undefined): AppAdminRole | null {
+  if (!isSuperAdminClaim(claims)) return null;
+  if (claims?.appAdminRole === "owner" || claims?.appAdminRole === "admin") {
+    return claims.appAdminRole;
+  }
+  return null;
 }
 
 export function isOwnerRole(role: GroupRole | null): boolean {
@@ -61,7 +67,6 @@ export const canManageAdmins = isOwnerRole;
 export const canDeleteGroup = isOwnerRole;
 export const canTransferOwnership = isOwnerRole;
 export const canManageOrganisers = isOwnerRole;
-export const canManageTeamOwners = isSuperAdminEmail;
 
 /** A squad must keep one owner, so owners transfer ownership before leaving. */
 export function canLeaveGroup(role: GroupRole | null): boolean {

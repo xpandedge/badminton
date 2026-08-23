@@ -1,11 +1,14 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
+import { getAppAdminRole, isSuperAdminClaim, type AppAdminRole, type SuperAdminClaims } from "@picklebaddies/domain";
 import { getAdminAuth } from "@/server/firebase/admin";
 
 export interface SessionUser {
   uid: string;
   email: string | null;
+  superAdmin: boolean;
+  appAdminRole: AppAdminRole | null;
 }
 
 /**
@@ -20,7 +23,13 @@ export const verifySession = cache(async (): Promise<SessionUser | null> => {
 
   try {
     const decoded = await getAdminAuth().verifyIdToken(token, /* checkRevoked */ true);
-    return { uid: decoded.uid, email: decoded.email ?? null };
+    const claims = decoded as SuperAdminClaims;
+    return {
+      uid: decoded.uid,
+      email: decoded.email ?? null,
+      superAdmin: isSuperAdminClaim(claims),
+      appAdminRole: getAppAdminRole(claims),
+    };
   } catch {
     return null;
   }
@@ -38,10 +47,27 @@ export async function requireSession(): Promise<SessionUser> {
   return session;
 }
 
+export async function requireSuperAdmin(): Promise<SessionUser> {
+  const session = await requireSession();
+  if (!session.superAdmin) {
+    throw new ServerAuthError("Forbidden", "FORBIDDEN");
+  }
+  return session;
+}
+
+export async function requireAppOwner(): Promise<SessionUser> {
+  const session = await requireSuperAdmin();
+  if (session.appAdminRole !== "owner") {
+    throw new ServerAuthError("Forbidden", "FORBIDDEN");
+  }
+  return session;
+}
+
 export class ServerAuthError extends Error {
-  readonly code = "UNAUTHENTICATED";
-  constructor(message: string) {
+  readonly code: "UNAUTHENTICATED" | "FORBIDDEN";
+  constructor(message: string, code: "UNAUTHENTICATED" | "FORBIDDEN" = "UNAUTHENTICATED") {
     super(message);
     this.name = "ServerAuthError";
+    this.code = code;
   }
 }

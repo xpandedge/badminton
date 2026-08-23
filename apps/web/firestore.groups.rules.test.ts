@@ -173,8 +173,8 @@ describe("groups security rules", () => {
     );
   });
 
-  it("allows super admin to read groups and assign team owners", async () => {
-    const superAdmin = env.authenticatedContext("superAdmin", { email: "pankaj4bharat@gmail.com" }).firestore();
+  it("allows app support admin claim to read groups and assign squad owners", async () => {
+    const superAdmin = env.authenticatedContext("superAdmin", { superAdmin: true }).firestore();
     await assertSucceeds(getDoc(doc(superAdmin, "groups", "group1")));
     await assertSucceeds(
       setDoc(doc(superAdmin, "groups", "group1", "members", "newOwner"), {

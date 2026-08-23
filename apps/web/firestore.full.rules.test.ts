@@ -83,13 +83,36 @@ describe("§19.1 Users", () => {
   });
 
   it("super admin can read user profiles", async () => {
-    const db = testEnv.authenticatedContext("superAdmin", { email: "sanju36@gmail.com" }).firestore();
+    const db = testEnv.authenticatedContext("superAdmin", { superAdmin: true }).firestore();
     await assertSucceeds(getDoc(doc(db, "users/member1")));
   });
 
   it("user can write their own profile", async () => {
     const db = testEnv.authenticatedContext("owner1").firestore();
     await assertSucceeds(setDoc(doc(db, "users/owner1"), { displayName: "New" }));
+  });
+
+  it("user cannot edit privileged profile fields", async () => {
+    const db = testEnv.authenticatedContext("member1").firestore();
+    await assertFails(setDoc(doc(db, "users/member1"), { emailLower: "sharma.sanjeev.au@gmail.com" }, { merge: true }));
+    await assertFails(setDoc(doc(db, "users/member1"), { superAdmin: true }, { merge: true }));
+    await assertFails(setDoc(doc(db, "users/member1"), { appAdminRole: "owner" }, { merge: true }));
+  });
+
+  it("profile email spoofing does not grant app support access", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "groups/g2"), { createdBy: "otherOwner", memberIds: ["otherOwner"] });
+      await setDoc(doc(db, "groups/g2/members/otherOwner"), { role: "owner" });
+    });
+
+    const db = testEnv.authenticatedContext("spoofedUser").firestore();
+    await assertSucceeds(setDoc(doc(db, "users/spoofedUser"), {
+      displayName: "Spoofed",
+      email: "sharma.sanjeev.au@gmail.com",
+      emailLower: "sharma.sanjeev.au@gmail.com",
+    }));
+    await assertFails(getDoc(doc(db, "groups/g2")));
   });
 
   it("user cannot write another user's profile", async () => {
@@ -117,7 +140,7 @@ describe("§19.2 Groups", () => {
   });
 
   it("super admin can read and update the group", async () => {
-    const db = testEnv.authenticatedContext("superAdmin", { email: "pankaj4bharat@gmail.com" }).firestore();
+    const db = testEnv.authenticatedContext("superAdmin", { superAdmin: true }).firestore();
     await assertSucceeds(getDoc(doc(db, "groups/g1")));
     await assertSucceeds(setDoc(doc(db, "groups/g1"), { name: "Admin Updated" }, { merge: true }));
   });
@@ -152,7 +175,7 @@ describe("§19.3 Group Members", () => {
   });
 
   it("super admin can create team owner docs", async () => {
-    const db = testEnv.authenticatedContext("superAdmin", { email: "pankaj4bharat@gmail.com" }).firestore();
+    const db = testEnv.authenticatedContext("superAdmin", { superAdmin: true }).firestore();
     await assertSucceeds(setDoc(doc(db, "groups/g1/members/newowner"), { role: "owner" }));
   });
 
@@ -349,6 +372,14 @@ describe("§19.10 JoinRequests (D6)", () => {
 // ── Catch-all ────────────────────────────────────────────────────────────────
 
 describe("Catch-all deny rule", () => {
+  it("blocks client access to founder support internals", async () => {
+    const db = testEnv.authenticatedContext("superAdmin", { superAdmin: true }).firestore();
+    await assertFails(getDoc(doc(db, "_adminAuditLogs/log1")));
+    await assertFails(setDoc(doc(db, "_adminAuditLogs/log1"), { action: "test" }));
+    await assertFails(getDoc(doc(db, "_appAdmins/admin1")));
+    await assertFails(setDoc(doc(db, "_appAdmins/admin1"), { role: "owner" }));
+  });
+
   it("blocks access to arbitrary unknown collections", async () => {
     const db = testEnv.authenticatedContext("owner1").firestore();
     await assertFails(getDoc(doc(db, "unknownCollection/doc1")));

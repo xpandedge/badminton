@@ -13,11 +13,12 @@ import {
   canManageGroup,
   canManageMembers,
   canManageSessionPlayers,
-  canManageTeamOwners,
   canRebalanceSession,
   canRemoveGroupMember,
   canTransferOwnership,
+  getAppAdminRole,
   groupRoleLabel,
+  isSuperAdminClaim,
   normalizeGroupRole,
   resolveGroupRole,
   type GroupMember,
@@ -52,12 +53,22 @@ describe("group roles", () => {
 });
 
 describe("permission matrix", () => {
-  it("allows configured super admins to manage team owners", () => {
-    expect(canManageTeamOwners("pankaj4bharat@gmail.com")).toBe(true);
-    expect(canManageTeamOwners("sanju36@gmail.com")).toBe(true);
-    expect(canManageTeamOwners("Pankaj4Bharat@gmail.com")).toBe(true);
-    expect(canManageTeamOwners("member@example.com")).toBe(false);
-    expect(canManageTeamOwners(null)).toBe(false);
+  it("accepts only the literal boolean true custom claim for app support access", () => {
+    expect(isSuperAdminClaim({ superAdmin: true })).toBe(true);
+    expect(isSuperAdminClaim({ superAdmin: false })).toBe(false);
+    expect(isSuperAdminClaim({ superAdmin: "true" })).toBe(false);
+    expect(isSuperAdminClaim({ superAdmin: 1 })).toBe(false);
+    expect(isSuperAdminClaim({})).toBe(false);
+    expect(isSuperAdminClaim(null)).toBe(false);
+    expect(isSuperAdminClaim(undefined)).toBe(false);
+  });
+
+  it("returns only supported app admin roles when the super admin claim is present", () => {
+    expect(getAppAdminRole({ superAdmin: true, appAdminRole: "owner" })).toBe("owner");
+    expect(getAppAdminRole({ superAdmin: true, appAdminRole: "admin" })).toBe("admin");
+    expect(getAppAdminRole({ superAdmin: true, appAdminRole: "support" })).toBeNull();
+    expect(getAppAdminRole({ superAdmin: false, appAdminRole: "owner" })).toBeNull();
+    expect(getAppAdminRole({ appAdminRole: "owner" })).toBeNull();
   });
 
   it("keeps ownership capabilities owner-only", () => {

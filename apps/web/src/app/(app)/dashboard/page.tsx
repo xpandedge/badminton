@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { isSuperAdminEmail } from "@picklebaddies/domain";
 import { useAuth } from "@/lib/auth/useAuth";
 import { watchUserGroups } from "@/lib/groups/groups";
+import { getFounderSupportAccessAction } from "@/server/admin/access";
 import { getMySessionsAction, rsvpToSession, type SessionSummaryData } from "@/server/sessions/actions";
 import { joinSquadByCode, requestToJoinSquad, searchSquads, type SquadSearchResult } from "@/server/squads/actions";
 import { formatSessionStatus } from "@/lib/format/status";
@@ -47,11 +47,11 @@ export default function DashboardPage() {
   const [requestedIds, setRequestedIds] = useState<Record<string, boolean>>({});
   const [rsvpLoading, setRsvpLoading] = useState<Set<string>>(new Set());
   const [rsvpErrors, setRsvpErrors] = useState<Record<string, string>>({});
+  const [canAccessFounderSupport, setCanAccessFounderSupport] = useState(false);
   const squadSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const displayName = user?.displayName?.trim() || "Player";
   const firstName = displayName.split(/[\s@]/)[0] || "Player";
-  const isSuperAdmin = isSuperAdminEmail(user?.email);
   const sessions = useMemo<DashboardSession[]>(() => {
     if (!mySessions) return [];
 
@@ -110,7 +110,10 @@ export default function DashboardPage() {
       : `${groups.length} ${groups.length === 1 ? "squad" : "squads"} - ${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`;
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setCanAccessFounderSupport(false);
+      return;
+    }
     const unsub = watchUserGroups(
       user.uid,
       (g) => {
@@ -123,6 +126,9 @@ export default function DashboardPage() {
       },
     );
     void getMySessionsAction().then((r) => { if (r.ok) setMySessions(r.data); }).catch(() => {});
+    void getFounderSupportAccessAction()
+      .then((r) => setCanAccessFounderSupport(r.ok && r.data.canAccess))
+      .catch(() => setCanAccessFounderSupport(false));
     return unsub;
   }, [user?.uid]);
 
@@ -300,9 +306,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {isSuperAdmin && (
+      {canAccessFounderSupport && (
         <Link href="/admin" className="pb-btn pb-btn-secondary" style={{ textDecoration: "none", justifyContent: "center" }}>
-          Super Admin
+          Founder Support
         </Link>
       )}
 

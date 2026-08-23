@@ -78,6 +78,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /_supportCases/{docId} {
+      allow read, write: if false;
+    }
+
     match /groups/{groupId} {
       function memberRole() {
         // Use .get() with default to avoid eval error when 'role' field is absent.

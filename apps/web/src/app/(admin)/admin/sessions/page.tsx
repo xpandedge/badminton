@@ -7,13 +7,17 @@ function fmt(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
-export default async function AdminSessionsPage() {
+export default async function AdminSessionsPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string }> }) {
   await assertSuperAdminPage();
-  const sessions = await listAdminSessions(50);
+  const params = await searchParams;
+  const q = params.q?.trim() ?? "";
+  const status = params.status?.trim() || "all";
+  const sessions = await listAdminSessions({ q, status, limit: 50 });
 
   return (
     <section style={{ display: "grid", gap: "1rem" }}>
       <Header title="Sessions" count={sessions.length} subtitle="Recent sessions with squad, status, court, RSVP, and match signals." />
+      <FilterForm q={q} status={status} />
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1060 }}>
           <thead>
@@ -45,6 +49,24 @@ export default async function AdminSessionsPage() {
 
 function Header({ title, count, subtitle }: { title: string; count: number; subtitle: string }) {
   return <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1rem" }}><h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.5rem", fontWeight: 900 }}>{title} <span style={{ color: "var(--text-3)" }}>({count})</span></h2><p style={{ color: "var(--text-2)", marginTop: "0.35rem" }}>{subtitle}</p></section>;
+}
+
+function FilterForm({ q, status }: { q: string; status: string }) {
+  return (
+    <form style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) 180px auto", gap: "0.75rem", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.75rem" }}>
+      <input className="pb-input" name="q" defaultValue={q} placeholder="Search session, squad, venue, or ID" style={{ marginTop: 0 }} />
+      <select className="pb-input" name="status" defaultValue={status} style={{ marginTop: 0 }}>
+        <option value="all">All statuses</option>
+        <option value="draft">Draft</option>
+        <option value="scheduled">Scheduled</option>
+        <option value="active">Active</option>
+        <option value="paused">Paused</option>
+        <option value="completed">Completed</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      <button className="pb-button" type="submit">Filter</button>
+    </form>
+  );
 }
 
 function Th({ children }: { children: ReactNode }) { return <th style={{ padding: "0.75rem", whiteSpace: "nowrap" }}>{children}</th>; }

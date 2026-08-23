@@ -10,6 +10,8 @@ const navItems = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/squads", label: "Squads" },
   { href: "/admin/sessions", label: "Sessions" },
+  { href: "/admin/health", label: "Health" },
+  { href: "/admin/cases", label: "Cases" },
   { href: "/admin/fixes", label: "Fixes" },
   { href: "/admin/app-admins", label: "App Admins" },
   { href: "/admin/audit", label: "Audit" },

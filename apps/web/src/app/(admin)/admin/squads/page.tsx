@@ -7,13 +7,18 @@ function fmt(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "-";
 }
 
-export default async function AdminSquadsPage() {
+export default async function AdminSquadsPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; geography?: string }> }) {
   await assertSuperAdminPage();
-  const squads = await listAdminSquads(50);
+  const params = await searchParams;
+  const q = params.q?.trim() ?? "";
+  const status = params.status === "active" || params.status === "archived" ? params.status : "all";
+  const geography = params.geography?.trim() ?? "";
+  const squads = await listAdminSquads({ q, status, geography, limit: 50 });
 
   return (
     <section style={{ display: "grid", gap: "1rem" }}>
       <Header title="Squads" count={squads.length} subtitle="Recent squads, ownership, adoption geography, and session volume." />
+      <FilterForm q={q} status={status} geography={geography} />
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
           <thead>
@@ -43,6 +48,21 @@ export default async function AdminSquadsPage() {
 
 function Header({ title, count, subtitle }: { title: string; count: number; subtitle: string }) {
   return <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1rem" }}><h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.5rem", fontWeight: 900 }}>{title} <span style={{ color: "var(--text-3)" }}>({count})</span></h2><p style={{ color: "var(--text-2)", marginTop: "0.35rem" }}>{subtitle}</p></section>;
+}
+
+function FilterForm({ q, status, geography }: { q: string; status: string; geography: string }) {
+  return (
+    <form style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) 160px 180px auto", gap: "0.75rem", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.75rem" }}>
+      <input className="pb-input" name="q" defaultValue={q} placeholder="Search squad, owner, or ID" style={{ marginTop: 0 }} />
+      <select className="pb-input" name="status" defaultValue={status} style={{ marginTop: 0 }}>
+        <option value="all">All squads</option>
+        <option value="active">Active only</option>
+        <option value="archived">Archived only</option>
+      </select>
+      <input className="pb-input" name="geography" defaultValue={geography} placeholder="Geography" style={{ marginTop: 0 }} />
+      <button className="pb-button" type="submit">Filter</button>
+    </form>
+  );
 }
 
 function Th({ children }: { children: ReactNode }) { return <th style={{ padding: "0.75rem", whiteSpace: "nowrap" }}>{children}</th>; }

@@ -62,7 +62,27 @@ export interface AdminSessionRow {
   matchCount: number | null;
 }
 
-export async function listAdminUsers(limit = 50): Promise<AdminUserRow[]> {
+export interface AdminListOptions {
+  limit?: number;
+  q?: string;
+  status?: string;
+}
+
+export interface AdminSessionHealthRow extends AdminSessionRow {
+  problem: "stuck_active" | "not_started" | "completed_unscored";
+  problemLabel: string;
+  unscoredMatches: number;
+}
+
+function includesQuery(values: string[], q: string): boolean {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return values.some((value) => value.toLowerCase().includes(needle));
+}
+
+export async function listAdminUsers(options: AdminListOptions = {}): Promise<AdminUserRow[]> {
+  const { q = "", status = "all" } = options;
+  const limit = options.limit ?? 50;
   const cappedLimit = Math.min(Math.max(limit, 1), 50);
   const auth = getAdminAuth();
   const db = getAdminDb();
@@ -87,10 +107,15 @@ export async function listAdminUsers(limit = 50): Promise<AdminUserRow[]> {
       disabled: user.disabled,
       playerGames: typeof player?.totalGames === "number" ? player.totalGames : null,
     };
-  }).sort((a, b) => dateMs(b.lastSignInIso ?? b.createdAtIso) - dateMs(a.lastSignInIso ?? a.createdAtIso));
+  })
+    .filter((user) => status === "all" || (status === "disabled" ? user.disabled : !user.disabled))
+    .filter((user) => includesQuery([user.uid, user.displayName, user.email], q))
+    .sort((a, b) => dateMs(b.lastSignInIso ?? b.createdAtIso) - dateMs(a.lastSignInIso ?? a.createdAtIso));
 }
 
-export async function listAdminSquads(limit = 50): Promise<AdminSquadRow[]> {
+export async function listAdminSquads(options: AdminListOptions & { geography?: string } = {}): Promise<AdminSquadRow[]> {
+  const { q = "", status = "all", geography: geographyFilter = "" } = options;
+  const limit = options.limit ?? 50;
   const cappedLimit = Math.min(Math.max(limit, 1), 50);
   const db = getAdminDb();
   const snap = await db.collection("groups").orderBy("updatedAt", "desc").limit(cappedLimit).get()
@@ -131,10 +156,16 @@ export async function listAdminSquads(limit = 50): Promise<AdminSquadRow[]> {
     } satisfies AdminSquadRow;
   }));
 
-  return rows.sort((a, b) => dateMs(b.updatedAtIso ?? b.createdAtIso) - dateMs(a.updatedAtIso ?? a.createdAtIso));
+  return rows
+    .filter((squad) => status === "all" || squad.status === status)
+    .filter((squad) => !geographyFilter || squad.geography.toLowerCase().includes(geographyFilter.toLowerCase()))
+    .filter((squad) => includesQuery([squad.id, squad.name, squad.ownerUid, squad.ownerName, squad.geography], q))
+    .sort((a, b) => dateMs(b.updatedAtIso ?? b.createdAtIso) - dateMs(a.updatedAtIso ?? a.createdAtIso));
 }
 
-export async function listAdminSessions(limit = 50): Promise<AdminSessionRow[]> {
+export async function listAdminSessions(options: AdminListOptions = {}): Promise<AdminSessionRow[]> {
+  const { q = "", status = "all" } = options;
+  const limit = options.limit ?? 50;
   const cappedLimit = Math.min(Math.max(limit, 1), 50);
   const db = getAdminDb();
   const snap = await db.collection("sessions").orderBy("createdAt", "desc").limit(cappedLimit).get()
@@ -170,5 +201,41 @@ export async function listAdminSessions(limit = 50): Promise<AdminSessionRow[]> 
       rsvpGoingCount: typeof session.rsvpGoingCount === "number" ? session.rsvpGoingCount : 0,
       matchCount: matchCounts[index] ?? null,
     } satisfies AdminSessionRow;
-  }).sort((a, b) => dateMs(b.createdAtIso ?? b.startsAtIso) - dateMs(a.createdAtIso ?? a.startsAtIso));
+  })
+    .filter((session) => status === "all" || session.status === status)
+    .filter((session) => includesQuery([session.id, session.name, session.squadId, session.squadName, session.status, session.sport, session.venueName], q))
+    .sort((a, b) => dateMs(b.createdAtIso ?? b.startsAtIso) - dateMs(a.createdAtIso ?? a.startsAtIso));
+}
+
+export async function listAdminSessionHealth(limit = 50): Promise<AdminSessionHealthRow[]> {
+  const sessions = await listAdminSessions({ limit });
+  const db = getAdminDb();
+  const now = Date.now();
+  const rows: Array<AdminSessionHealthRow | null> = await Promise.all(sessions.map(async (session) => {
+    const matchesSnap = await db.collection(`sessions/${session.id}/matches`).limit(50).get().catch(() => null);
+    let unscoredMatches = 0;
+    let totalMatches = 0;
+    for (const matchDoc of matchesSnap?.docs ?? []) {
+      const match = matchDoc.data();
+      if (match.status === "cancelled") continue;
+      totalMatches += 1;
+      const scored = match.status === "completed" && (match.winnerTeam === "A" || match.winnerTeam === "B" || Boolean(match.scorePayload));
+      if (!scored) unscoredMatches += 1;
+    }
+
+    const startedOrCreatedMs = dateMs(session.startsAtIso ?? session.createdAtIso);
+    const ageHours = startedOrCreatedMs ? (now - startedOrCreatedMs) / 36e5 : 0;
+    if ((session.status === "active" || session.status === "paused") && ageHours >= 12) {
+      return { ...session, matchCount: totalMatches, unscoredMatches, problem: "stuck_active", problemLabel: "Active or paused for 12h+" } satisfies AdminSessionHealthRow;
+    }
+    if ((session.status === "draft" || session.status === "scheduled") && ageHours >= 48) {
+      return { ...session, matchCount: totalMatches, unscoredMatches, problem: "not_started", problemLabel: "Not started after 48h" } satisfies AdminSessionHealthRow;
+    }
+    if (session.status === "completed" && unscoredMatches > 0) {
+      return { ...session, matchCount: totalMatches, unscoredMatches, problem: "completed_unscored", problemLabel: "Completed with unscored matches" } satisfies AdminSessionHealthRow;
+    }
+    return null;
+  }));
+
+  return rows.filter((row): row is AdminSessionHealthRow => row !== null);
 }

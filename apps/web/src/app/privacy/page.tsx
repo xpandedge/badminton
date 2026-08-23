@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { LegalPage, type LegalSectionLink } from "@/components/LegalPage";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | DuoRally",
+  title: "Privacy Policy",
   description: "How Xpandedge Pty Ltd collects, uses, stores and protects personal information when you use DuoRally.",
+  alternates: { canonical: "/privacy" },
 };
 
 const sections: LegalSectionLink[] = [

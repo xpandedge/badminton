@@ -1,151 +1,153 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { LegalLinks } from "@/components/LegalLinks";
 
+export const metadata: Metadata = {
+  title: "Racquet Sports Rotation App",
+  description:
+    "DuoRally helps social tennis, badminton, pickleball, squash, and table tennis groups create fair rotations, manage sit-outs, run courts, and track scores.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "DuoRally | Racquet Sports Rotation App",
+    description:
+      "Create fair rotations, manage sit-outs, run courts, and track scores for social tennis, badminton, pickleball, squash, and table tennis sessions.",
+    url: "/",
+  },
+};
+
+const benefits = [
+  {
+    title: "Fair player rotation",
+    body: "Generate court lineups that balance players, partners, opponents, skill levels, and sit-outs across a social session.",
+  },
+  {
+    title: "Live court management",
+    body: "Swap players, mark someone as stepped out, adjust courts, and keep the next games moving without losing completed scores.",
+  },
+  {
+    title: "Scores and rankings",
+    body: "Record winner-only or points-based results, then keep a session table and player history for regular squads.",
+  },
+];
+
+const links = [
+  { href: "/racquet-sports-rotation-app", label: "Racquet sports rotation app" },
+  { href: "/badminton-doubles-rotation-app", label: "Badminton rotation app" },
+  { href: "/pickleball-rotation-app", label: "Pickleball rotation app" },
+  { href: "/brisbane-pickleball-badminton-court-bookings", label: "Brisbane court booking links" },
+];
+
+const softwareJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "DuoRally",
+  applicationCategory: "SportsApplication",
+  operatingSystem: "Web",
+  url: "https://duorally.com.au/",
+  description:
+    "A web app for fair racquet-sport rotations, social session management, live court changes, scoring, and rankings for tennis, badminton, pickleball, squash, table tennis, and similar court sports.",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "AUD",
+  },
+};
+
 export default function Home() {
   return (
-    <div
-      className="pb-net-bg"
-      style={{
-        minHeight: "100dvh",
-        background: "var(--bg)",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "2rem 1.25rem",
-      }}
-    >
-      <div style={{ width: "100%", maxWidth: 440, display: "flex", flexDirection: "column", gap: "0.875rem" }}>
+    <main className="pb-public-shell">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareJsonLd) }}
+      />
+      <nav className="pb-public-nav" aria-label="DuoRally public navigation">
+        <Link href="/" className="pb-public-brand" aria-label="DuoRally home">
+          <Logo variant="full" theme="light" size={42} showKicker />
+        </Link>
+        <div className="pb-public-nav__links">
+          {links.map((item) => (
+            <Link key={item.href} href={item.href}>
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
 
-        {/* Ink hero card */}
-        <div
-          style={{
-            background: "var(--ink-800)",
-            borderRadius: "var(--r-2xl)",
-            padding: "2.5rem 2rem 2rem",
-            position: "relative",
-            overflow: "hidden",
-            animation: "pb-rise 500ms var(--ease-out) both",
-          }}
-        >
-          {/* Volt court-net overlay on ink */}
-          <div
-            aria-hidden
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundImage:
-                "repeating-linear-gradient(45deg, rgba(155,232,112,0.07) 0 1px, transparent 1px 18px), repeating-linear-gradient(-45deg, rgba(155,232,112,0.07) 0 1px, transparent 1px 18px)",
-              pointerEvents: "none",
-            }}
-          />
-
-          {/* Logo row */}
-          <div style={{ marginBottom: "1.75rem" }}>
-            <Logo variant="full" theme="dark" size={44} animated showKicker />
-          </div>
-
-          {/* Headline */}
-          <div
-            style={{
-              fontFamily: "var(--font-display)",
-              fontWeight: 900,
-              fontSize: "clamp(2.75rem, 11vw, 4rem)",
-              color: "var(--n-50)",
-              textTransform: "uppercase",
-              letterSpacing: "-0.03em",
-              lineHeight: 1.0,
-              marginBottom: "1rem",
-            }}
-          >
-            Games on.<br />
-            <span style={{ color: "#9BE870" }}>Zero</span>
-            <br />
-            faff.
-          </div>
-
-          <p
-            style={{
-              fontFamily: "var(--font-body)",
-              fontSize: "0.9375rem",
-              color: "rgba(246,248,244,0.6)",
-              lineHeight: 1.6,
-              maxWidth: "28ch",
-              marginBottom: "1.5rem",
-            }}
-          >
-            Plan sessions, manage players, run courts, and track scores for social pickleball and badminton groups.
+      <section className="pb-public-hero">
+        <div className="pb-public-hero__copy">
+          <span className="pb-kicker">Racquet sports session organiser</span>
+          <h1>Fair player rotations without the courtside spreadsheet.</h1>
+          <p>
+            DuoRally helps social tennis, badminton, pickleball, squash, table tennis, and other racquet-sport
+            groups create balanced games, manage sit-outs, run live courts, and track scores from one mobile-friendly app.
           </p>
-
-          {/* Sport tags */}
-          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 12px 5px 9px",
-                borderRadius: "var(--r-pill)",
-                background: "rgba(155,232,112,0.12)",
-                color: "#9BE870",
-                fontFamily: "var(--font-body)",
-                fontSize: 13,
-                fontWeight: 700,
-                border: "1px solid rgba(155,232,112,0.22)",
-              }}
-            >
-              ⚡ Pickleball
-            </span>
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 12px 5px 9px",
-                borderRadius: "var(--r-pill)",
-                background: "rgba(61,109,255,0.12)",
-                color: "#7A9BFF",
-                fontFamily: "var(--font-body)",
-                fontSize: 13,
-                fontWeight: 700,
-                border: "1px solid rgba(61,109,255,0.22)",
-              }}
-            >
-              🏸 Badminton
-            </span>
+          <div className="pb-public-actions">
+            <Link className="pb-btn pb-btn-volt" href="/sign-in">
+              Get started
+            </Link>
+            <Link className="pb-public-text-link" href="/racquet-sports-rotation-app">
+              See how rotations work
+            </Link>
           </div>
         </div>
+        <div className="pb-public-scoreboard" aria-label="Example session rotation">
+          <div>
+            <span>Court 1</span>
+            <strong>Mia + Leo</strong>
+            <em>vs Priya + Noah</em>
+          </div>
+          <div>
+            <span>Court 2</span>
+            <strong>Ava + Sam</strong>
+            <em>vs Kim + Jordan</em>
+          </div>
+          <div>
+            <span>Waiting</span>
+            <strong>Ben, Ella</strong>
+            <em>Next on after this game</em>
+          </div>
+        </div>
+      </section>
 
-        {/* CTA */}
-        <Link
-          href="/sign-in"
-          style={{ textDecoration: "none", animation: "pb-rise 500ms 80ms var(--ease-out) both", display: "block" }}
-        >
-          <button
-            className="pb-btn pb-btn-volt"
-            style={{ height: 58, fontSize: "1.0625rem" }}
-          >
-            Get started →
-          </button>
-        </Link>
+      <section className="pb-public-section" aria-labelledby="why-duorally">
+        <div className="pb-public-section__heading">
+          <span className="pb-mono-label">Why groups use it</span>
+          <h2 id="why-duorally">Built for casual court sessions that still need to feel fair.</h2>
+        </div>
+        <div className="pb-public-grid">
+          {benefits.map((item) => (
+            <article className="pb-public-tile" key={item.title}>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
 
-        {/* Tagline */}
-        <p
-          style={{
-            textAlign: "center",
-            fontFamily: "var(--font-mono)",
-            fontSize: "0.6875rem",
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            color: "var(--text-3)",
-            animation: "pb-fade 600ms 200ms var(--ease-out) both",
-          }}
-        >
-          Plan games · run courts · track scores
-        </p>
+      <section className="pb-public-section pb-public-two-up" aria-labelledby="sports">
+        <div>
+          <span className="pb-mono-label">Explore by sport</span>
+          <h2 id="sports">A simple way to run the games your group already loves.</h2>
+          <p>
+            Set up DuoRally for tennis, badminton, pickleball, squash, table tennis, or another social court sport.
+            Each session keeps the focus on fair turns, quick results, and less organiser admin.
+          </p>
+        </div>
+        <div className="pb-public-link-list">
+          {links.map((item) => (
+            <Link key={item.href} href={item.href}>
+              {item.label}
+              <span aria-hidden="true">-&gt;</span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <footer className="pb-public-footer">
+        <span>Xpandedge Pty Ltd</span>
         <LegalLinks compact />
-      </div>
-    </div>
+      </footer>
+    </main>
   );
 }

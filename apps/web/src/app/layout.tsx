@@ -4,8 +4,13 @@ import { AuthProvider } from "@/lib/auth/AuthProvider";
 import { DevUserSwitcher } from "@/components/DevUserSwitcher";
 
 export const metadata: Metadata = {
-  title: "DuoRally - Run Social Racquet Sessions",
-  description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+  metadataBase: new URL("https://duorally.com.au"),
+  applicationName: "DuoRally",
+  title: {
+    default: "DuoRally | Racquet Sports Rotation App",
+    template: "%s | DuoRally",
+  },
+  description: "Create fair player rotations, manage sit-outs, run courts, and track scores for social tennis, badminton, pickleball, squash, and table tennis sessions.",
   manifest: "/manifest.webmanifest",
   icons: {
     // SVG first so the tab icon stays crisp at any density; the PNG is the
@@ -17,14 +22,16 @@ export const metadata: Metadata = {
     apple: "/icons/icon-192.png",
   },
   openGraph: {
-    title: "DuoRally - Run Social Racquet Sessions",
-    description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+    title: "DuoRally | Racquet Sports Rotation App",
+    description: "Create fair player rotations, manage sit-outs, run courts, and track scores for social tennis, badminton, pickleball, squash, and table tennis sessions.",
+    url: "https://duorally.com.au",
+    siteName: "DuoRally",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "DuoRally - Run Social Racquet Sessions",
-    description: "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+    title: "DuoRally | Racquet Sports Rotation App",
+    description: "Create fair player rotations, manage sit-outs, run courts, and track scores for social tennis, badminton, pickleball, squash, and table tennis sessions.",
   },
   appleWebApp: { capable: true, statusBarStyle: "default", title: "DuoRally" },
 };

@@ -10,7 +10,7 @@ export default async function AdminSearchPage({ searchParams }: { searchParams: 
     <div style={{ display: "grid", gap: "1rem" }}>
       <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1rem" }}>
         <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.5rem", fontWeight: 900, marginBottom: "0.75rem" }}>
-          Search DuoRally
+          Requests search
         </h2>
         <form style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.5rem" }}>
           <input className="pb-input" name="q" defaultValue={q} placeholder="Email, name, squad, session ID, or code" />

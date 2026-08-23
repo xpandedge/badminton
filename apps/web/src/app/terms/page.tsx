@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { LegalPage, type LegalSectionLink } from "@/components/LegalPage";
 
 export const metadata: Metadata = {
-  title: "Terms of Use | DuoRally",
+  title: "Terms of Use",
   description: "The terms that apply when organisers and players use DuoRally.",
+  alternates: { canonical: "/terms" },
 };
 
 const sections: LegalSectionLink[] = [
@@ -50,9 +51,10 @@ export default function TermsPage() {
       <section id="service">
         <h2>The service</h2>
         <p>
-          DuoRally helps social badminton and pickleball squads organise members, venues, courts, sessions, match rotations,
-          scores and leaderboards. It is an organisational tool; Xpandedge does not operate your venue, employ your
-          organiser, supervise play or run the underlying sporting activity.
+          DuoRally helps social racquet sport squads organise members, venues, courts, sessions, match rotations,
+          scores and leaderboards for sports such as tennis, badminton, pickleball, squash, table tennis and similar
+          court games. It is an organisational tool; Xpandedge does not operate your venue, employ your organiser,
+          supervise play or run the underlying sporting activity.
         </p>
         <p>
           DuoRally is currently offered without charge. If paid features are introduced, applicable pricing and additional

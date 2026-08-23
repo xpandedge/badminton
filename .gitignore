@@ -9,6 +9,7 @@ build/
 out/
 functions/lib/
 *.tsbuildinfo
+tmp/
 
 # env / secrets
 .env

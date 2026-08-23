@@ -14,7 +14,7 @@ export default async function AdminAuditPage() {
   return (
     <section style={{ display: "grid", gap: "0.75rem" }}>
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1rem" }}>
-        <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.5rem", fontWeight: 900 }}>Audit</h2>
+        <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.5rem", fontWeight: 900 }}>Fix log</h2>
         <p style={{ color: "var(--text-2)", marginTop: "0.5rem" }}>Latest founder support actions.</p>
       </div>
       {logs.map((log) => (

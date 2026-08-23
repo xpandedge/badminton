@@ -1,7 +1,7 @@
 {
   "name": "DuoRally - Run Social Racquet Sessions",
   "short_name": "DuoRally",
-  "description": "Plan games, manage players, run courts, and track scores for social pickleball and badminton sessions.",
+  "description": "Plan games, manage players, run courts, and track scores for social tennis, badminton, pickleball, squash, and table tennis sessions.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

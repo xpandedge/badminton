@@ -234,7 +234,7 @@ function Wordmark({ theme, markSize, showKicker, animated, splashDone }: Wordmar
               whiteSpace: "nowrap",
             }}
           >
-            Badminton · Pickleball
+            Racquet sports
           </span>
         )}
       </div>

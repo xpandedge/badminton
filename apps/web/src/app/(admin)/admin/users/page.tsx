@@ -16,7 +16,7 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
 
   return (
     <section style={{ display: "grid", gap: "1rem" }}>
-      <Header title="Users" count={users.length} subtitle="Latest Firebase Auth users with profile and player signals." />
+      <Header title="People" count={users.length} subtitle="Latest Firebase Auth users with profile and player signals." />
       <FilterForm q={q} status={status} />
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 920 }}>

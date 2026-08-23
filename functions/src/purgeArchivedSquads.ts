@@ -8,6 +8,7 @@ import {
   isSquadArchived,
   isSquadPurgeDue,
 } from "@picklebaddies/domain";
+import { autoCompleteStaleSessions } from "./autoCompleteStaleSessions.js";
 import { FUNCTIONS_REGION } from "./options.js";
 
 const DEFAULT_PURGE_LIMIT = 25;
@@ -90,8 +91,12 @@ export const purgeArchivedSquads = onSchedule(
   },
   async () => {
     const result = await purgeExpiredArchivedSquads(getFirestore());
+    const sessionResult = await autoCompleteStaleSessions(getFirestore());
     console.log(
       `Archived squad purge scanned ${result.scanned} candidate(s) and purged ${result.purged}.`,
+    );
+    console.log(
+      `Session cleanup scanned ${sessionResult.scanned} live session(s) and completed ${sessionResult.completed}.`,
     );
   },
 );

@@ -6,7 +6,7 @@ Prevent sessions from remaining visibly active forever when an organiser forgets
 
 ## Design
 
-Record `startedAt` when a session first transitions into `active`; pausing and resuming do not reset it. Extend the existing once-daily `purgeArchivedSquads` scheduled function with a bounded, retry-safe scan that changes only `active` or `paused` sessions at least 24 hours past their start to `completed`. The scan writes a `session_auto_completed` audit entry and leaves match documents, scores, and player statistics unchanged. Existing sessions without `startedAt` use their last `updatedAt` as a conservative migration fallback.
+Record `startedAt` when a session first transitions into `active`; pausing and resuming do not reset it. Extend the existing once-daily `purgeArchivedSquads` scheduled function with a bounded, retry-safe scan that changes only `active` or `paused` sessions at least 24 hours past their start to `completed`. The scan cancels any scheduled or in-progress matches without inventing scores, writes a `session_auto_completed` audit entry, and leaves completed scores and player statistics unchanged. Existing sessions without `startedAt` use their last `updatedAt` as a conservative migration fallback.
 
 No new scheduled function is introduced. The trade-off is that cleanup happens during the existing daily run, so automatic completion can occur within roughly 24 to 48 hours after the recorded start.
 

@@ -295,6 +295,7 @@ export async function updateSessionStatus(
 
       t.update(sessionRef, {
         status: statusTo,
+        ...(isStart ? { startedAt: FieldValue.serverTimestamp() } : {}),
         updatedAt: FieldValue.serverTimestamp(),
       });
 

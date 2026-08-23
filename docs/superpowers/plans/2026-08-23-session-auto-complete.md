@@ -14,8 +14,8 @@
 - Modify: `functions/src/sessionLifecycle.ts`
 - Modify: `apps/web/src/server/sessions/actions.ts`
 
-- [ ] Write `startedAt` only for the first transition into `active`.
-- [ ] Preserve `startedAt` across pause/resume and manual completion.
+- [x] Write `startedAt` only for the first transition into `active`.
+- [x] Preserve `startedAt` across pause/resume and manual completion.
 
 ### Task 2: Add daily stale-session cleanup
 
@@ -24,13 +24,13 @@
 - Modify: `functions/src/purgeArchivedSquads.ts`
 - Add: `functions/src/__tests__/sessionAutoComplete.test.ts`
 
-- [ ] Scan active/paused sessions during the existing daily job.
-- [ ] Re-read candidates in a transaction and complete only sessions at least 24 hours old.
-- [ ] Write an audit record and keep match/stat documents unchanged.
-- [ ] Use `updatedAt` only as a fallback for legacy sessions without `startedAt`.
+- [x] Scan active/paused sessions during the existing daily job.
+- [x] Re-read candidates in a transaction and complete only sessions at least 24 hours old.
+- [x] Write an audit record, cancel open matches, and keep completed scores/player stats unchanged.
+- [x] Use `updatedAt` only as a fallback for legacy sessions without `startedAt`.
 
 ### Task 3: Verify and release
 
-- [ ] Run functions and web typechecks/tests and build functions.
-- [ ] Review the diff and confirm no new scheduled function was added.
+- [x] Run functions and web typechecks/tests and build functions; local packaging was blocked only by Windows symlink permissions after successful compilation.
+- [ ] Run the one-off cleanup against production after deployment and confirm no new scheduled function was added.
 - [ ] Commit, push, deploy Vercel/Firebase, and verify the workflow.

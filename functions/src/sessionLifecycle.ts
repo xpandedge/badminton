@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { canCreateSession } from "@picklebaddies/domain";
 import { requireGroupRole } from "./lib/auth.js";
 import { writeAudit } from "./lib/audit.js";
@@ -58,7 +58,10 @@ const updateSessionStatus = async (
 };
 
 export const startSession = onCall({ cors: true }, (request) =>
-  updateSessionStatus(request, ["draft", "scheduled"], "active", "session_started", { currentRoundNumber: 1 })
+  updateSessionStatus(request, ["draft", "scheduled"], "active", "session_started", {
+    currentRoundNumber: 1,
+    startedAt: FieldValue.serverTimestamp(),
+  })
 );
 
 export const pauseSession = onCall({ cors: true }, (request) =>

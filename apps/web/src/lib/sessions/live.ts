@@ -78,7 +78,9 @@ export function watchLeaderboard(sessionId: string, mode: ScoringMode, callback:
   const { db } = getFirebaseServices();
   const q = query(collection(db, `sessions/${sessionId}/leaderboard`));
   const emit = (snapshot: { docs: any[] }) => {
-    const lb = snapshot.docs.map((doc) => ({ playerId: doc.id, ...doc.data() }));
+    const lb = snapshot.docs
+      .map((doc) => ({ playerId: doc.id, ...doc.data() }))
+      .filter((row: any) => Number(row.gamesPlayed ?? 0) > 0);
     lb.sort((a: any, b: any) => leaderboardCompare(a as LeaderboardRow, b as LeaderboardRow, mode));
     callback(lb);
   };

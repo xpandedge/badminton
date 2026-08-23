@@ -89,7 +89,7 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
       roster.push({ playerId: doc.id, displayName: p.displayName ?? "Player" });
     }
     const gamesPlayed = p.gamesPlayed ?? 0;
-    if (gamesPlayed > 0 || ACTIVE_STATUSES.has(status)) {
+    if (gamesPlayed > 0) {
       const pointsFor = p.pointsFor ?? 0;
       const pointsAgainst = p.pointsAgainst ?? 0;
       leaderRows.push({

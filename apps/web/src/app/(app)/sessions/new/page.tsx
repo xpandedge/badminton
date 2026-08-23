@@ -28,7 +28,7 @@ export default function NewSessionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
-  const { sport: preferredSport, isLoaded: prefLoaded, setSport: saveSportPreference } = useSportPreference();
+  const { sport: preferredSport, isLoaded: prefLoaded, openPicker } = useSportPreference();
 
   const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [groupId, setGroupId] = useState("");
@@ -109,16 +109,8 @@ export default function NewSessionPage() {
 
   const selectedGroupName = groups.find((g) => g.id === groupId)?.name ?? "—";
   const canCreate = !!user && !!groupId && !!venueName.trim() && courtNames.length > 0 && !!name.trim() && !isSubmitting;
-  const sportLabel = SPORT_CHOICES.find((item) => item.value === sport)?.label ?? sport;
-
-  const handleSportSelect = (nextSport: "badminton" | "pickleball") => {
-    setSport(nextSport);
-    if (preferredSport !== nextSport) {
-      void saveSportPreference(nextSport).catch((err) => {
-        console.error("Failed to save sport preference:", err);
-      });
-    }
-  };
+  const selectedSport = SPORT_CHOICES.find((item) => item.value === sport) ?? SPORT_CHOICES[0];
+  const sportLabel = selectedSport.label;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -334,64 +326,61 @@ export default function NewSessionPage() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Sport for this session</span>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-3)" }}>
-                Selected: <strong style={{ color: "var(--text-1)" }}>{sportLabel}</strong>
+                From your default
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.625rem" }}>
-              {SPORT_CHOICES.map((choice) => {
-                const selected = sport === choice.value;
-                const savedDefault = preferredSport === choice.value;
-                return (
-                <button
-                  key={choice.value}
-                  data-testid={`session-sport-${choice.value}`}
-                  type="button"
-                  onClick={() => handleSportSelect(choice.value)}
-                  style={{
-                    minHeight: 112,
-                    padding: "0.875rem",
-                    borderRadius: "var(--r-xl)",
-                    border: selected ? "2px solid var(--ink-800)" : "1.5px solid var(--border)",
-                    background: selected ? "var(--ink-800)" : "var(--surface-sunken)",
-                    color: selected ? "var(--volt-500)" : "var(--text-2)",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    display: "grid",
-                    alignContent: "space-between",
-                    gap: "0.5rem",
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-                    <span style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", lineHeight: 1 }}>{choice.label}</span>
-                    {selected && (
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.5625rem", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                        In use
-                      </span>
-                    )}
-                  </span>
-                  <span style={{ color: selected ? "rgba(198,241,53,0.78)" : "var(--text-3)", fontSize: "0.75rem", lineHeight: 1.35 }}>
-                    {choice.detail}
-                  </span>
-                  {savedDefault && (
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.5625rem", letterSpacing: "0.08em", textTransform: "uppercase", color: selected ? "rgba(198,241,53,0.7)" : "var(--text-3)" }}>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+              gap: "0.75rem",
+              alignItems: "center",
+              border: "1.5px solid var(--border)",
+              borderRadius: "var(--r-xl)",
+              background: "var(--surface-sunken)",
+              padding: "0.875rem",
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                  <strong style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", color: "var(--text-1)" }}>
+                    {sportLabel}
+                  </strong>
+                  {preferredSport === sport && (
+                    <span style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "0.5625rem",
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                      color: "var(--ink-800)",
+                      background: "var(--volt-500)",
+                      borderRadius: "var(--r-pill)",
+                      padding: "3px 8px",
+                      fontWeight: 900,
+                    }}>
                       Saved default
                     </span>
                   )}
-                </button>
-                );
-              })}
-            </div>
-            <div style={{
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-lg)",
-              background: "var(--surface-sunken)",
-              padding: "0.75rem",
-              color: "var(--text-2)",
-              fontSize: "0.8125rem",
-              lineHeight: 1.45,
-            }}>
-              This session will be created as <strong>{sportLabel}</strong>. Scoring defaults, session labels, and future results use this sport.
+                </div>
+                <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", lineHeight: 1.4, marginTop: "0.25rem" }}>
+                  {selectedSport.detail} Change your sport default only when this session is for a different sport.
+                </p>
+              </div>
+              <button
+                  type="button"
+                  onClick={openPicker}
+                  style={{
+                    minHeight: 42,
+                    padding: "0 0.875rem",
+                    borderRadius: "var(--r-md)",
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    color: "var(--text-1)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Change
+              </button>
             </div>
           </div>
 

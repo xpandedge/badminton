@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { LegalLinks } from "@/components/LegalLinks";
+import { SupportForm } from "@/components/SupportForm";
 
 type GuideRole = "organiser" | "player";
 
@@ -1093,6 +1094,7 @@ export default function HelpPage() {
                 ))}
               </div>
             </section>
+            <SupportForm />
             <footer className="pb-help-legal">
               <span>Xpandedge Pty Ltd</span>
               <LegalLinks compact />

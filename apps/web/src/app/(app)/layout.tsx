@@ -154,9 +154,9 @@ function NavBar() {
           color: isGroups ? "var(--volt-500)" : "var(--text-3)",
         }}>Squads</span>
       </Link>
-      {/* Help */}
+      {/* Support */}
       <Link
-        href="/help"
+        href="/help#support"
         style={{
           display: "flex",
           flexDirection: "column",
@@ -178,7 +178,7 @@ function NavBar() {
           letterSpacing: "0.08em",
           textTransform: "uppercase",
           color: "var(--text-3)",
-        }}>Help</span>
+        }}>Support</span>
       </Link>
     </nav>
   );

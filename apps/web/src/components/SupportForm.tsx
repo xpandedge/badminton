@@ -27,7 +27,7 @@ export function SupportForm() {
     setSubject("");
     setMessage("");
     setHoneypot("");
-    setStatus({ type: "success", message: "Thanks. Your message has been sent to the DuoRally support team." });
+    setStatus({ type: "success", message: "Thanks. Your support request has been logged." });
   }
 
   return (

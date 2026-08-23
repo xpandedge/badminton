@@ -11,6 +11,7 @@ import {
   type GroupRole,
   type Sport,
   type ScoringMode,
+  type SessionFormat,
   type SessionRsvpCapacity,
   type RsvpResponse,
   type SquadPlayerKind,
@@ -61,6 +62,8 @@ export interface CreateSessionInput {
   estimatedGameMinutes?: number;
   /** Override scoring mode; defaults to sport's defaultScoringMode. */
   scoringMode?: ScoringMode;
+  /** Defaults to the current social rotation format for back-compat. */
+  sessionFormat?: SessionFormat;
   venueName?: string;
   startsAtIso?: string;
 }
@@ -157,6 +160,7 @@ export async function createSession(
 
   const sportConfig = getSportConfig(sport);
   const scoringMode = input.scoringMode ?? sportConfig.defaultScoringMode;
+  const sessionFormat = input.sessionFormat ?? "social_rotation";
   const estimatedGameMinutes = input.estimatedGameMinutes ?? 15;
 
   // Build DELTA_SPEC D2 court array
@@ -193,6 +197,7 @@ export async function createSession(
     courts: sessionCourts,
     courtCount: sessionCourts.length,
     scoringMode,
+    sessionFormat,
     createdBy: session.uid,
     rsvpGoingCount: 0,
     rsvpNotGoingCount: 0,

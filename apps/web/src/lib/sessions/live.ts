@@ -4,6 +4,7 @@ import { leaderboardCompare, ScoringMode, LeaderboardRow } from "@picklebaddies/
 import { logEvent } from "@/lib/analytics/events";
 import { watchWithFallback } from "@/lib/realtime/watchWithFallback";
 import { generateSchedule as serverGenerateSchedule } from "@/server/sessions/generate";
+import { generateRoundRobinSchedule as serverGenerateRoundRobinSchedule, type RoundRobinTeamInput } from "@/server/sessions/round-robin";
 import { updateSessionStatus, deleteSession as serverDeleteSession } from "@/server/sessions/actions";
 
 export async function deleteSession(data: { sessionId: string }) {
@@ -16,6 +17,13 @@ export async function generateSchedule(data: { sessionId: string }) {
   const result = await serverGenerateSchedule(data.sessionId);
   if (!result.ok) throw new Error(result.message);
   void logEvent("schedule_generated", { sessionId: data.sessionId });
+  return { data: result.data };
+}
+
+export async function generateRoundRobinSchedule(data: { sessionId: string; teams: RoundRobinTeamInput[] }) {
+  const result = await serverGenerateRoundRobinSchedule(data);
+  if (!result.ok) throw new Error(result.message);
+  void logEvent("schedule_generated", { sessionId: data.sessionId, format: "fixed_pair_round_robin" });
   return { data: result.data };
 }
 
@@ -80,6 +88,22 @@ export function watchLeaderboard(sessionId: string, mode: ScoringMode, callback:
   const emit = (snapshot: { docs: any[] }) => {
     const lb = snapshot.docs
       .map((doc) => ({ playerId: doc.id, ...doc.data() }))
+      .filter((row: any) => Number(row.gamesPlayed ?? 0) > 0);
+    lb.sort((a: any, b: any) => leaderboardCompare(a as LeaderboardRow, b as LeaderboardRow, mode));
+    callback(lb);
+  };
+  return watchWithFallback(
+    (onData, onError) => onSnapshot(q, (snap) => { emit(snap); onData(snap); }, onError),
+    () => { void getDocs(q).then(emit).catch(() => {}); },
+  );
+}
+
+export function watchTeamLeaderboard(sessionId: string, mode: ScoringMode, callback: (leaderboard: any[]) => void) {
+  const { db } = getFirebaseServices();
+  const q = query(collection(db, `sessions/${sessionId}/teamLeaderboard`));
+  const emit = (snapshot: { docs: any[] }) => {
+    const lb = snapshot.docs
+      .map((doc) => ({ teamId: doc.id, ...doc.data() }))
       .filter((row: any) => Number(row.gamesPlayed ?? 0) > 0);
     lb.sort((a: any, b: any) => leaderboardCompare(a as LeaderboardRow, b as LeaderboardRow, mode));
     callback(lb);

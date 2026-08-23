@@ -31,6 +31,7 @@ export default function NewSessionPage() {
   const [durationMinutes, setDurationMinutes] = useState(90);
   const [scheduledTime, setScheduledTime] = useState("");
   const [scoringMode, setScoringMode] = useState<"winner_only" | "points">("points");
+  const [sessionFormat, setSessionFormat] = useState<"social_rotation" | "fixed_pair_round_robin">("social_rotation");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -114,6 +115,7 @@ export default function NewSessionPage() {
         durationMinutes,
         estimatedGameMinutes: ESTIMATED_GAME_MINUTES,
         scoringMode,
+        sessionFormat,
         venueName,
         startsAtIso: scheduledTime ? new Date(scheduledTime).toISOString() : undefined,
       });
@@ -162,6 +164,7 @@ export default function NewSessionPage() {
             </div>
             <div style={{ fontSize: "0.8125rem", color: "rgba(246,248,244,0.55)", marginTop: "0.375rem" }}>
               {durationMinutes} min · {courtNames.length} court{courtNames.length !== 1 ? "s" : ""} · {sport}
+              {sessionFormat === "fixed_pair_round_robin" ? " · round robin" : ""}
             </div>
           </div>
           <div style={{
@@ -329,6 +332,38 @@ export default function NewSessionPage() {
             </div>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.05em" }}>
               Default target: <strong>{sportConfig.defaultTargetScore} pts</strong>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: "0.4rem" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Format</span>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+              {[
+                { value: "social_rotation", label: "Social session", hint: "Fair rotating games" },
+                { value: "fixed_pair_round_robin", label: "Round robin", hint: "Fixed teams, every matchup" },
+              ].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSessionFormat(option.value as "social_rotation" | "fixed_pair_round_robin")}
+                  style={{
+                    padding: "0.75rem",
+                    borderRadius: "var(--r-lg)",
+                    border: sessionFormat === option.value ? "2px solid var(--ink-800)" : "1.5px solid var(--border)",
+                    background: sessionFormat === option.value ? "var(--ink-800)" : "var(--surface-sunken)",
+                    color: sessionFormat === option.value ? "var(--volt-500)" : "var(--text-2)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    fontSize: "0.8125rem",
+                    display: "grid",
+                    gap: "0.2rem",
+                    textAlign: "left",
+                  }}
+                >
+                  <span>{option.label}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.04em", opacity: 0.8 }}>{option.hint}</span>
+                </button>
+              ))}
             </div>
           </div>
 

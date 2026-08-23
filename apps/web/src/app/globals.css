@@ -1035,6 +1035,12 @@ button, input, textarea, select { font-family: inherit; }
   align-items: center;
 }
 
+.pb-round-robin-team-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(130px, 1fr) minmax(130px, 1fr) auto;
+  gap: 0.5rem;
+}
+
 @media (max-width: 900px) {
   .pb-live-main-grid {
     grid-template-columns: 1fr;
@@ -1113,10 +1119,17 @@ button, input, textarea, select { font-family: inherit; }
     gap: 0.625rem;
   }
 
+  .pb-round-robin-team-grid {
+    grid-template-columns: 1fr;
+    gap: 0.625rem;
+  }
+
   .pb-guest-add-form .pb-input,
   .pb-guest-add-form button,
   .pb-member-add-form .pb-input,
-  .pb-member-add-form button {
+  .pb-member-add-form button,
+  .pb-round-robin-team-grid .pb-input,
+  .pb-round-robin-team-grid button {
     min-height: 48px;
     width: 100%;
   }

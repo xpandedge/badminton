@@ -1,4 +1,4 @@
-import type { ScoringMode, SessionStatus, SessionPlayerStatus, SkillLevel } from "@picklebaddies/domain";
+import type { ScoringMode, SessionFormat, SessionStatus, SessionPlayerStatus, SkillLevel } from "@picklebaddies/domain";
 
 export interface SessionCourt {
   courtId: string;
@@ -20,6 +20,7 @@ export interface Session {
   courts: SessionCourt[];            // DELTA_SPEC D2 snapshot (replaces numberOfCourts)
   courtCount: number;                // derived: count of isActive courts
   scoringMode: ScoringMode;          // DELTA_SPEC D1
+  sessionFormat?: SessionFormat;
   createdBy: string;
   /** Continuous scheduling: courts advance independently, no synchronized
    *  round pointer. Purely a labeling counter for the next assigned match. */

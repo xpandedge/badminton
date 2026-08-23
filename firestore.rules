@@ -214,6 +214,21 @@ service cloud.firestore {
         allow write: if false; // Server tier only (D8)
       }
 
+      match /teamLeaderboard/{teamId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only (D8)
+      }
+
+      match /roundRobinTeams/{teamId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only (D8)
+      }
+
+      match /roundRobinByes/{byeId} {
+        allow read: if isSessionGroupMember() || isSessionPlayer();
+        allow write: if false; // Server tier only (D8)
+      }
+
       match /sitOuts/{sitOutId} {
         allow read: if isSessionGroupMember() || isSessionPlayer();
         allow write: if false; // Server tier only

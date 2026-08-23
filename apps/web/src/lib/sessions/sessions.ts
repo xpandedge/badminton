@@ -16,6 +16,7 @@ export interface CreateSessionInput {
   durationMinutes: number;
   estimatedGameMinutes: number;
   scoringMode: "winner_only" | "points";
+  sessionFormat?: "social_rotation" | "fixed_pair_round_robin";
 }
 
 export async function createSession(input: CreateSessionInput): Promise<string> {
@@ -49,6 +50,7 @@ export async function createSession(input: CreateSessionInput): Promise<string> 
     courts,
     courtCount: courts.length,
     scoringMode: input.scoringMode,
+    sessionFormat: input.sessionFormat ?? "social_rotation",
     createdBy: uid,
     currentRoundNumber: 0,
     joinCode: generateJoinCode(),

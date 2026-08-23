@@ -52,6 +52,12 @@ export async function generateSchedule(
           { code: "ALREADY_EXISTS" },
         );
       }
+      if (s.sessionFormat === "fixed_pair_round_robin") {
+        throw Object.assign(
+          new Error("Use the round robin team builder to generate this session."),
+          { code: "FAILED_PRECONDITION" },
+        );
+      }
 
       const playersSnap = await t.get(db.collection(`sessions/${sessionId}/players`));
       const players = playersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));

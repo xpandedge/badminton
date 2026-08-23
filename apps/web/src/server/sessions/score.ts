@@ -73,17 +73,27 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
       const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
       const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
       const allPlayerIds = [...teamAIds, ...teamBIds];
+      const isRoundRobin = (session.sessionFormat ?? match.sessionFormat) === "fixed_pair_round_robin";
+      const roundRobinTeamAId = typeof match.roundRobinTeamAId === "string" ? match.roundRobinTeamAId : null;
+      const roundRobinTeamBId = typeof match.roundRobinTeamBId === "string" ? match.roundRobinTeamBId : null;
 
       const playerRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/players/${id}`));
       const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
       const globalRefs = allPlayerIds.map((id) => db.doc(`players/${id}`));
+      const teamLeaderboardRefs = roundRobinTeamAId && roundRobinTeamBId
+        ? [
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamAId}`),
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamBId}`),
+        ]
+        : [];
 
-      const auto = isEdit ? null : await readAutoFillInputs(t, db, sessionId, matchId);
+      const auto = isEdit || isRoundRobin ? null : await readAutoFillInputs(t, db, sessionId, matchId);
 
-      const [playerDocs, lbDocs, globalDocs] = await Promise.all([
+      const [playerDocs, lbDocs, globalDocs, teamLeaderboardDocs] = await Promise.all([
         Promise.all(playerRefs.map((r) => t.get(r))),
         Promise.all(lbRefs.map((r) => t.get(r))),
         Promise.all(globalRefs.map((r) => t.get(r))),
+        Promise.all(teamLeaderboardRefs.map((r) => t.get(r))),
       ]);
 
       // Squad ratings are append-only for first submission in v1; edit replay is a later integrity task.
@@ -131,6 +141,22 @@ export async function submitScore(input: SubmitScoreInput): Promise<ActionResult
             ...(isEdit ? {} : { lastPlayedAt: FieldValue.serverTimestamp() }),
             updatedAt: FieldValue.serverTimestamp(),
           });
+        }
+      }
+
+      if (roundRobinTeamAId && roundRobinTeamBId && teamLeaderboardRefs.length === 2) {
+        const teams = [
+          { ref: teamLeaderboardRefs[0]!, snap: teamLeaderboardDocs[0], isTeamA: true },
+          { ref: teamLeaderboardRefs[1]!, snap: teamLeaderboardDocs[1], isTeamA: false },
+        ];
+
+        for (const team of teams) {
+          let teamStats = team.snap?.data() ?? {};
+          if (isEdit && priorPayload && priorWinner) {
+            teamStats = applyDelta(teamStats, { isTeamA: team.isTeamA, winner: priorWinner, payload: priorPayload, sign: -1 });
+          }
+          teamStats = applyDelta(teamStats, { isTeamA: team.isTeamA, winner: winnerTeam, payload, sign: 1 });
+          t.set(team.ref, teamStats, { merge: true });
         }
       }
 

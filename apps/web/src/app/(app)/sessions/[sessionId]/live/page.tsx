@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchEngineState, deleteSession } from "@/lib/sessions/live";
+import { generateSchedule, generateRoundRobinSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession } from "@/lib/sessions/live";
 import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured, addGuestPlayerToSession } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
@@ -18,6 +18,13 @@ import type { Session, SessionPlayer } from "@/lib/sessions/types";
 import { formatSessionStatus, formatScoringMode } from "@/lib/format/status";
 import { addGroupMemberToSession } from "@/server/sessions/players";
 import { ensureSessionRsvpLink } from "@/server/sessions/actions";
+
+type RoundRobinPairDraft = {
+  id: string;
+  playerAId: string;
+  playerBId: string;
+  displayName: string;
+};
 
 function titleCase(value: string) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -43,14 +50,20 @@ function statusTone(status: string) {
   return { bg: "var(--surface-sunken)", fg: "var(--text-2)" };
 }
 
+function createRoundRobinPairDraft(index: number): RoundRobinPairDraft {
+  return { id: `pair_${Date.now()}_${index}_${Math.random().toString(36).slice(2)}`, playerAId: "", playerBId: "", displayName: "" };
+}
+
 export default function LiveOrganiserPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params);
 
   const [session, setSession] = useState<Session | null>(null);
   const [matches, setMatches] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [teamLeaderboard, setTeamLeaderboard] = useState<any[]>([]);
   const [players, setPlayers] = useState<(SessionPlayer & { id: string })[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [roundRobinPairs, setRoundRobinPairs] = useState<RoundRobinPairDraft[]>(() => [createRoundRobinPairDraft(1)]);
 
   const [rebalanceSummary, setRebalanceSummary] = useState<string | null>(null);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
@@ -99,6 +112,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     if (!sessionId || !session?.scoringMode) return;
     return watchLeaderboard(sessionId, session.scoringMode, setLeaderboard);
   }, [sessionId, session?.scoringMode]);
+
+  useEffect(() => {
+    if (!sessionId || !session?.scoringMode || session.sessionFormat !== "fixed_pair_round_robin") {
+      setTeamLeaderboard([]);
+      return;
+    }
+    return watchTeamLeaderboard(sessionId, session.scoringMode, setTeamLeaderboard);
+  }, [sessionId, session?.scoringMode, session?.sessionFormat]);
 
   useEffect(() => {
     if (!sessionId || !user) return;
@@ -159,6 +180,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   // A completed session is a record, not a console. Anything that implies more
   // games are coming — court cards, the bench strip — is noise once it is done.
   const isCompleted = session.status === "completed";
+  const isRoundRobinSession = session.sessionFormat === "fixed_pair_round_robin";
   const canManageLive = canManageSessionPlayers(role);
   const canScore = canEnterScore(role);
   const canControlSession = canCreateSession(role);
@@ -224,7 +246,22 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     setActionError(null);
     try {
       if (matches.length === 0) {
-        await generateSchedule({ sessionId });
+        if (isRoundRobinSession) {
+          const teams = roundRobinPairs
+            .map((pair) => ({
+              playerAId: pair.playerAId,
+              playerBId: pair.playerBId,
+              displayName: pair.displayName.trim() || undefined,
+            }))
+            .filter((pair) => pair.playerAId && pair.playerBId);
+          if (teams.length < 2) {
+            setActionError("Add at least 2 fixed teams before starting round robin.");
+            return;
+          }
+          await generateRoundRobinSchedule({ sessionId, teams });
+        } else {
+          await generateSchedule({ sessionId });
+        }
       }
       await startSession({ sessionId });
     } catch (e: any) { setActionError(e.message); }
@@ -296,7 +333,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       const res = await addGuestPlayerToSession({ sessionId, displayName: sessionGuestName, skillLevel: sessionGuestSkill });
       setSessionGuestName("");
       setSessionGuestSkill("unknown");
-      if (res.data.rebalanceRecommended) {
+      if (!isRoundRobinSession && res.data.rebalanceRecommended) {
         const confirmed = await requestConfirmation({
           title: `Add ${addedGuestName} to the next games?`,
           description: "Current games will stay put. New games will include the updated player list.",
@@ -336,7 +373,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     setActionError(null);
     try {
       const res = await disableCourt({ sessionId, courtId });
-      if ((res.data as any).rebalanceRecommended) {
+      if (!isRoundRobinSession && (res.data as any).rebalanceRecommended) {
         const updateGames = await requestConfirmation({
           title: "Update the next games?",
           description: "New games will be redistributed across the remaining courts.",
@@ -434,19 +471,57 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const availableGroupPlayers = groupPlayers.filter(
     (player) => !sessionPlayerIds.has(player.id) && !sessionPlayerIds.has(player.userId ?? "__none__"),
   );
+  const completeRoundRobinPairs = roundRobinPairs.filter((pair) => pair.playerAId && pair.playerBId);
+  const selectedRoundRobinPlayerIds = completeRoundRobinPairs.flatMap((pair) => [pair.playerAId, pair.playerBId]);
+  const hasRoundRobinDuplicatePlayers = new Set(selectedRoundRobinPlayerIds).size !== selectedRoundRobinPlayerIds.length;
+  const canStartRoundRobin = !isRoundRobinSession || matches.length > 0 || (completeRoundRobinPairs.length >= 2 && !hasRoundRobinDuplicatePlayers);
+  const roundRobinTeamCount = isRoundRobinSession ? (matches.length > 0 ? (session as any).roundRobinTeamCount ?? teamLeaderboard.length : completeRoundRobinPairs.length) : null;
+
+  const updateRoundRobinPair = (id: string, updates: Partial<RoundRobinPairDraft>) => {
+    setRoundRobinPairs((current) => current.map((pair) => pair.id === id ? { ...pair, ...updates } : pair));
+  };
+  const addRoundRobinPair = () => {
+    setRoundRobinPairs((current) => [...current, createRoundRobinPairDraft(current.length + 1)]);
+  };
+  const removeRoundRobinPair = (id: string) => {
+    setRoundRobinPairs((current) => current.filter((pair) => pair.id !== id));
+  };
+  const autoPairRoundRobinPlayers = () => {
+    const ordered = [...activePlayers].sort((a, b) => a.displayName.localeCompare(b.displayName));
+    const pairs: RoundRobinPairDraft[] = [];
+    for (let i = 0; i + 1 < ordered.length; i += 2) {
+      pairs.push({
+        id: `pair_auto_${Date.now()}_${i}`,
+        playerAId: ordered[i]!.playerId,
+        playerBId: ordered[i + 1]!.playerId,
+        displayName: "",
+      });
+    }
+    setRoundRobinPairs(pairs.length > 0 ? pairs : [createRoundRobinPairDraft(1)]);
+  };
+  const isPlayerUsedInOtherPair = (playerId: string, pairId: string) =>
+    roundRobinPairs.some((pair) => pair.id !== pairId && (pair.playerAId === playerId || pair.playerBId === playerId));
 
   const scheduledMatches = matches.filter((m) => m.status === "scheduled");
-  const scheduledByCourtId = new Map(scheduledMatches.map((m) => [m.courtId, m]));
+  const roundRobinScheduledRounds = scheduledMatches.map((match) => Number(match.roundNumber ?? 0)).filter((round) => round > 0);
+  const nextRoundRobinRound = isRoundRobinSession && roundRobinScheduledRounds.length > 0
+    ? Math.min(...roundRobinScheduledRounds)
+    : null;
+  const currentScheduledMatches = nextRoundRobinRound
+    ? scheduledMatches.filter((match) => Number(match.roundNumber ?? 0) === nextRoundRobinRound)
+    : scheduledMatches;
+  const scheduledByCourtId = new Map(currentScheduledMatches.map((m) => [m.courtId, m]));
   const doneMatches = matches.filter((m) => m.status === "completed").sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0));
   const lockedMatches = matches.filter((match) => match.status === "completed" || match.status === "cancelled" || match.isLocked).length;
 
   // Who's on the bench right now: active players not currently in a scheduled match.
-  const playingNowIds = new Set<string>(scheduledMatches.flatMap((m) => [...(m.teamAIds ?? []), ...(m.teamBIds ?? [])]));
+  const playingNowIds = new Set<string>(currentScheduledMatches.flatMap((m) => [...(m.teamAIds ?? []), ...(m.teamBIds ?? [])]));
   const benchPlayers = activePlayers.filter((p) => !playingNowIds.has(p.playerId));
 
   // Games played per active player (from the live leaderboard) → fairness at a glance.
   const gamesById = new Map<string, number>(leaderboard.map((r: any) => [r.playerId, r.gamesPlayed ?? 0]));
   const gamesFor = (id: string) => gamesById.get(id) ?? 0;
+  const visibleLeaderboard = isRoundRobinSession ? teamLeaderboard : leaderboard;
 
   // Is the signed-in user already in this session as a player?
   const currentUserInSession = user
@@ -464,7 +539,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     try {
       const res = await addGroupMemberToSession(sessionId, currentUserGroupPlayer.id);
       if (!res.ok) throw new Error(res.message);
-      if (isLive) await handleRebalance("player_added");
+      if (isLive && !isRoundRobinSession) await handleRebalance("player_added");
     } catch (e: any) { setActionError(e.message); }
   };
 
@@ -474,7 +549,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     try {
       const result = await addGroupMemberToSession(sessionId, player.id);
       if (!result.ok) throw new Error(result.message);
-      if (isLive) await handleRebalance("player_added");
+      if (isLive && !isRoundRobinSession) await handleRebalance("player_added");
     } catch (e: any) {
       setActionError(e.message || "Could not add player.");
     } finally {
@@ -495,13 +570,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     if (failed.length > 0) {
       setActionError(`${failed.length} player${failed.length === 1 ? "" : "s"} could not be added. Try adding them individually.`);
     }
-    if (isLive && failed.length < results.length) await handleRebalance("player_added");
+    if (isLive && !isRoundRobinSession && failed.length < results.length) await handleRebalance("player_added");
     setIsAddingAllPlayers(false);
   };
   const activeGameCounts = activePlayers.map((p) => gamesFor(p.playerId));
   const gamesSpread = activeGameCounts.length > 0 ? Math.max(...activeGameCounts) - Math.min(...activeGameCounts) : null;
 
   const sessionTone = statusTone(session.status);
+  const sessionFormatLabel = isRoundRobinSession ? "round robin" : "social rotation";
   const primaryActionStyle: CSSProperties = {
     height: 44,
     padding: "0 0.875rem",
@@ -533,7 +609,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       ...m.teamB.map((p: any) => p.playerId),
     ]);
     const assignedToAnotherCourt = new Set<string>(
-      scheduledMatches
+      currentScheduledMatches
         .filter((match) => match.id !== m.id)
         .flatMap((match) => [...(match.teamAIds ?? []), ...(match.teamBIds ?? [])]),
     );
@@ -546,7 +622,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       return (
         <div key={p.playerId} data-testid="match-player" style={{ display: "grid", gap: "0.375rem", justifyItems: alignRight ? "end" : "start" }}>
           <span style={{ fontWeight: 900 }}>{p.displayName}</span>
-          {canManageLive && !isLocked && (
+          {canManageLive && !isRoundRobinSession && !isLocked && (
             <select
               value=""
               onChange={(e) => { if (e.target.value) handleSwapPlayer(m.id, p.playerId, e.target.value); }}
@@ -578,6 +654,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <p style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.125rem", fontWeight: 900 }}>
               {m.courtName ?? `Court ${m.courtId}`}
             </p>
+            {isRoundRobinSession && (
+              <p style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)", fontSize: "0.6875rem", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                Round {m.roundNumber ?? "-"}
+              </p>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span style={{
@@ -772,7 +853,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {session.name}
               </h1>
               <p style={{ color: "rgba(246,248,244,0.72)", marginTop: "0.5rem", maxWidth: 760 }}>
-                Live console · {formatScoringMode(session.scoringMode)} scoring · courts run independently
+                Live console · {sessionFormatLabel} · {formatScoringMode(session.scoringMode)} scoring
               </p>
             </div>
             <div style={{
@@ -803,6 +884,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           }}>
             {[
               { label: "Players", value: players.length },
+              ...(roundRobinTeamCount !== null ? [{ label: "Teams", value: roundRobinTeamCount }] : []),
               { label: "Courts", value: activeCourts.length },
               { label: "Games played", value: matches.filter((m) => m.status === "completed").length },
               { label: "On bench", value: benchPlayers.length },
@@ -934,7 +1016,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.625rem" }}>
         {canControlSession && (session.status === "draft" || session.status === "scheduled") && (
-          <button data-testid="start-session-btn" onClick={handleStart} style={primaryActionStyle}>Start Playing</button>
+          <button
+            data-testid="start-session-btn"
+            onClick={handleStart}
+            disabled={!canStartRoundRobin}
+            style={{ ...primaryActionStyle, opacity: canStartRoundRobin ? 1 : 0.5, cursor: canStartRoundRobin ? primaryActionStyle.cursor : "default" }}
+          >
+            Start Playing
+          </button>
         )}
         {canControlSession && session.status === "active" && (
           <button data-testid="complete-session-btn" onClick={() => completeSession({ sessionId })} style={{ ...secondaryActionStyle, color: "var(--danger)" }}>Complete Session</button>
@@ -1025,6 +1114,82 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   {activePlayers.length === 0 && <span style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>No players added yet.</span>}
                 </div>
               </div>
+
+              {isRoundRobinSession && (
+                <div style={{ padding: "1rem 0", borderBottom: "1px solid var(--border)", display: "grid", gap: "0.75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                    <div>
+                      <h4 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1rem", fontWeight: 900 }}>Fixed teams</h4>
+                      <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>Create at least two teams. Each team plays every other team once.</p>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <button type="button" onClick={autoPairRoundRobinPlayers} disabled={activePlayers.length < 4} style={{ ...secondaryActionStyle, height: 38, opacity: activePlayers.length >= 4 ? 1 : 0.5 }}>
+                        Auto-pair
+                      </button>
+                      <button type="button" onClick={addRoundRobinPair} style={{ ...primaryActionStyle, height: 38 }}>
+                        Add team
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gap: "0.625rem" }}>
+                    {roundRobinPairs.map((row, index) => {
+                      return (
+                        <div key={row.id} className="pb-round-robin-team-grid" style={{
+                          padding: "0.75rem",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--r-lg)",
+                          background: "var(--surface-sunken)",
+                          alignItems: "center",
+                        }}>
+                          <input
+                            className="pb-input"
+                            value={row.displayName}
+                            onChange={(e) => updateRoundRobinPair(row.id, { displayName: e.target.value })}
+                            placeholder={`Team ${index + 1} name`}
+                            style={{ height: 40, borderRadius: "var(--r-md)" }}
+                          />
+                          {(["playerAId", "playerBId"] as const).map((field) => (
+                            <select
+                              key={field}
+                              className="pb-input"
+                              value={row[field]}
+                              onChange={(e) => updateRoundRobinPair(row.id, { [field]: e.target.value })}
+                              style={{ height: 40, borderRadius: "var(--r-md)" }}
+                            >
+                              <option value="">{field === "playerAId" ? "Player 1" : "Player 2"}</option>
+                              {activePlayers.map((player) => {
+                                const disabled = isPlayerUsedInOtherPair(player.playerId, row.id)
+                                  || (field === "playerAId" ? row.playerBId === player.playerId : row.playerAId === player.playerId);
+                                return (
+                                  <option key={player.playerId} value={player.playerId} disabled={disabled}>
+                                    {player.displayName}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => removeRoundRobinPair(row.id)}
+                            disabled={roundRobinPairs.length <= 1}
+                            style={{ ...secondaryActionStyle, height: 40, color: "var(--danger)", opacity: roundRobinPairs.length > 1 ? 1 : 0.45 }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {hasRoundRobinDuplicatePlayers && (
+                    <p style={{ color: "var(--danger)", fontSize: "0.8125rem", fontWeight: 800 }}>Each player can only be in one team.</p>
+                  )}
+                  {!canStartRoundRobin && (
+                    <p style={{ color: "var(--text-3)", fontSize: "0.8125rem" }}>Add at least two complete teams before starting.</p>
+                  )}
+                </div>
+              )}
 
               <div style={{ padding: "1rem 0", borderBottom: "1px solid var(--border)" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", marginBottom: "0.625rem" }}>
@@ -1183,9 +1348,9 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           animation: "pb-rise 400ms 150ms var(--ease-out) both",
         }}>
           <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.875rem" }}>
-            Leaderboard
+            {isRoundRobinSession ? "Team Leaderboard" : "Leaderboard"}
           </h2>
-          {leaderboard.length === 0 ? (
+          {visibleLeaderboard.length === 0 ? (
             <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "1.5rem", color: "var(--text-2)", textAlign: "center" }}>
               No scores yet.
             </div>
@@ -1201,7 +1366,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 color: "var(--text-3)",
               }}>
                 <span>#</span>
-                <span>Player</span>
+                <span>{isRoundRobinSession ? "Team" : "Player"}</span>
                 <span style={{ textAlign: "right" }}>G</span>
                 <span style={{ textAlign: "right" }}>W</span>
                 <span style={{ textAlign: "right" }}>L</span>
@@ -1209,16 +1374,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {session.scoringMode === "points" && <span style={{ textAlign: "right" }}>PD</span>}
               </div>
 
-              {leaderboard.map((row, idx) => {
+              {visibleLeaderboard.map((row, idx) => {
                 const totalGames = row.gamesPlayed ?? ((row.wins ?? 0) + (row.losses ?? 0));
                 const wins = row.wins ?? 0;
                 const losses = row.losses ?? Math.max(0, totalGames - wins);
                 const winPct = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
                 const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
                 const pd = row.pointDifference ?? 0;
+                const rowId = row.teamId ?? row.playerId;
+                const rowLabel = row.displayName ?? displayNameById.get(row.playerId) ?? rowId;
+                const playerNames = Array.isArray(row.playerNames) ? row.playerNames.join(" / ") : "";
 
                 return (
-                  <div key={row.playerId} className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
+                  <div key={rowId} className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
                     alignItems: "center",
                     padding: "0.5rem 0.5rem",
                     borderRadius: "var(--r-lg)",
@@ -1227,8 +1395,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                     <span style={{ fontWeight: 900, fontSize: medal ? "1rem" : "0.75rem", fontFamily: "var(--font-mono)" }}>
                       {medal ?? (idx + 1)}
                     </span>
-                    <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {row.displayName ?? displayNameById.get(row.playerId) ?? row.playerId}
+                    <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={playerNames || rowLabel}>
+                      {rowLabel}
                     </span>
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--text-1)" }}>
                       {totalGames}

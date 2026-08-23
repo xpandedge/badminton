@@ -64,28 +64,30 @@ export async function getScoreLinkData(scoreCode: string): Promise<ActionResult<
   const activeCourts: Array<{ courtId: string; name: string }> =
     (session.courts as Array<{ courtId: string; name: string; isActive?: boolean }>).filter((c) => c.isActive !== false);
 
-  const matchSnaps = await Promise.all(
-    activeCourts.map((court) =>
-      db.collection(`sessions/${sessionId}/matches`)
-        .where("courtId", "==", court.courtId)
-        .where("status", "==", "scheduled")
-        .limit(1)
-        .get(),
-    ),
-  );
+  const scheduledMatchesSnap = await db.collection(`sessions/${sessionId}/matches`)
+    .where("status", "==", "scheduled")
+    .get();
+  const scheduledMatches = scheduledMatchesSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const isRoundRobin = session.sessionFormat === "fixed_pair_round_robin";
+  const roundRobinRounds = scheduledMatches
+    .map((match: any) => Number(match.roundNumber ?? 0))
+    .filter((round) => round > 0);
+  const currentRound = isRoundRobin && roundRobinRounds.length > 0 ? Math.min(...roundRobinRounds) : null;
 
-  const courts: ScoreLinkCourt[] = activeCourts.map((court, i) => {
-    const matchDoc = matchSnaps[i]!.docs[0];
-    if (!matchDoc) return { courtId: court.courtId, courtName: court.name, match: null };
-    const m = matchDoc.data();
+  const courts: ScoreLinkCourt[] = activeCourts.map((court) => {
+    const match = scheduledMatches.find((candidate: any) =>
+      candidate.courtId === court.courtId
+      && (!currentRound || Number(candidate.roundNumber ?? 0) === currentRound),
+    ) as any;
+    if (!match) return { courtId: court.courtId, courtName: court.name, match: null };
     return {
       courtId: court.courtId,
       courtName: court.name,
       match: {
-        matchId: matchDoc.id,
-        teamA: (m.teamA as Array<{ playerId: string; displayName: string }>).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
-        teamB: (m.teamB as Array<{ playerId: string; displayName: string }>).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
-        status: m.status as string,
+        matchId: match.id,
+        teamA: (match.teamA as Array<{ playerId: string; displayName: string }>).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
+        teamB: (match.teamB as Array<{ playerId: string; displayName: string }>).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
+        status: match.status as string,
       },
     };
   });
@@ -145,16 +147,28 @@ export async function submitScoreByLink(
       const sessionRef = db.doc(`sessions/${sessionId}`);
 
       // ── ALL READS FIRST ──
-      const [sessionSnap, matchQuery] = await Promise.all([
+      const [sessionSnap, scheduledMatchesSnap] = await Promise.all([
         t.get(sessionRef),
-        t.get(db.collection(`sessions/${sessionId}/matches`).where("courtId", "==", courtId).where("status", "==", "scheduled").limit(1)),
+        t.get(db.collection(`sessions/${sessionId}/matches`).where("status", "==", "scheduled")),
       ]);
       if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
       const session = sessionSnap.data()!;
       if (session.status !== "active") throw Object.assign(new Error("Session is not active"), { code: "FAILED_PRECONDITION" });
-      if (matchQuery.empty) throw Object.assign(new Error("No match found on that court"), { code: "NOT_FOUND" });
+      if (scheduledMatchesSnap.empty) throw Object.assign(new Error("No match found on that court"), { code: "NOT_FOUND" });
 
-      const matchDoc = matchQuery.docs[0]!;
+      const scheduledMatches = scheduledMatchesSnap.docs.map((doc) => ({ doc, data: doc.data() }));
+      const isRoundRobinSession = session.sessionFormat === "fixed_pair_round_robin";
+      const roundRobinRounds = scheduledMatches
+        .map((candidate) => Number((candidate.data as any).roundNumber ?? 0))
+        .filter((round) => round > 0);
+      const currentRound = isRoundRobinSession && roundRobinRounds.length > 0 ? Math.min(...roundRobinRounds) : null;
+      const currentMatch = scheduledMatches.find((candidate) =>
+        (candidate.data as any).courtId === courtId
+        && (!currentRound || Number((candidate.data as any).roundNumber ?? 0) === currentRound),
+      );
+      if (!currentMatch) throw Object.assign(new Error("No match found on that court"), { code: "NOT_FOUND" });
+
+      const matchDoc = currentMatch.doc;
       const match = matchDoc.data();
       const matchRef = matchDoc.ref;
 
@@ -165,14 +179,24 @@ export async function submitScoreByLink(
       const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
       const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
       const allPlayerIds = [...teamAIds, ...teamBIds];
+      const isRoundRobin = (session.sessionFormat ?? match.sessionFormat) === "fixed_pair_round_robin";
+      const roundRobinTeamAId = typeof match.roundRobinTeamAId === "string" ? match.roundRobinTeamAId : null;
+      const roundRobinTeamBId = typeof match.roundRobinTeamBId === "string" ? match.roundRobinTeamBId : null;
       const playerRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/players/${id}`));
       const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
+      const teamLeaderboardRefs = roundRobinTeamAId && roundRobinTeamBId
+        ? [
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamAId}`),
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamBId}`),
+        ]
+        : [];
 
-      const auto = await readAutoFillInputs(t, db, sessionId, matchDoc.id);
+      const auto = isRoundRobin ? null : await readAutoFillInputs(t, db, sessionId, matchDoc.id);
 
-      const [playerDocs, lbDocs] = await Promise.all([
+      const [playerDocs, lbDocs, teamLeaderboardDocs] = await Promise.all([
         Promise.all(playerRefs.map((r) => t.get(r))),
         Promise.all(lbRefs.map((r) => t.get(r))),
+        Promise.all(teamLeaderboardRefs.map((r) => t.get(r))),
       ]);
 
       if (teamAIds.length === 2 && teamBIds.length === 2) {
@@ -216,6 +240,10 @@ export async function submitScoreByLink(
         t.set(playerRefs[i]!, updateStats(playerDocs[i]?.data(), allPlayerIds[i]!), { merge: true });
         t.set(lbRefs[i]!, updateStats(lbDocs[i]?.data(), allPlayerIds[i]!), { merge: true });
       }
+      if (roundRobinTeamAId && roundRobinTeamBId && teamLeaderboardRefs.length === 2) {
+        t.set(teamLeaderboardRefs[0]!, updateTeamStats(teamLeaderboardDocs[0]?.data(), true, payload, winnerTeam), { merge: true });
+        t.set(teamLeaderboardRefs[1]!, updateTeamStats(teamLeaderboardDocs[1]?.data(), false, payload, winnerTeam), { merge: true });
+      }
       if (auto) writeAutoFill(t, db, sessionId, sessionRef, auto);
 
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
@@ -236,4 +264,21 @@ export async function submitScoreByLink(
     if (e.code === "INVALID_ARGUMENT") return err("INVALID_ARGUMENT", e.message);
     throw e;
   }
+}
+
+function updateTeamStats(data: any, isTeamA: boolean, payload: ScorePayload, winnerTeam: "A" | "B") {
+  const stats = data || { gamesPlayed: 0, wins: 0, losses: 0, pointsFor: 0, pointsAgainst: 0, pointDifference: 0 };
+  const isWinner = winnerTeam === (isTeamA ? "A" : "B");
+  const rawFor = "teamAScore" in payload ? (isTeamA ? payload.teamAScore : payload.teamBScore) : undefined;
+  const rawAgainst = "teamAScore" in payload ? (isTeamA ? payload.teamBScore : payload.teamAScore) : undefined;
+  const hasPoints = typeof rawFor === "number" && typeof rawAgainst === "number";
+  return {
+    ...stats,
+    gamesPlayed: (stats.gamesPlayed || 0) + 1,
+    wins: (stats.wins || 0) + (isWinner ? 1 : 0),
+    losses: (stats.losses || 0) + (isWinner ? 0 : 1),
+    pointsFor: (stats.pointsFor || 0) + (hasPoints ? rawFor : 0),
+    pointsAgainst: (stats.pointsAgainst || 0) + (hasPoints ? rawAgainst : 0),
+    pointDifference: (stats.pointDifference || 0) + (hasPoints ? rawFor - rawAgainst : 0),
+  };
 }

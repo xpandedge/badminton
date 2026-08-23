@@ -411,9 +411,8 @@ export default function DashboardPage() {
       </section>
 
       {groupsLoaded && groups.length > 0 && (
-        <nav aria-label="Dashboard shortcuts" style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "0.5rem", animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
+        <nav aria-label="Dashboard shortcuts" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "0.5rem", animation: "pb-rise 400ms 120ms var(--ease-out) both" }}>
           <Link href="/groups" style={utilityLinkStyle}>Join squad</Link>
-          <Link href="/leaderboard" style={utilityLinkStyle}>Rankings</Link>
           <Link href="/bookings" style={utilityLinkStyle}>Book court</Link>
         </nav>
       )}

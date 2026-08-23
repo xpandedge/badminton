@@ -263,8 +263,8 @@ const PLAYER_SECTIONS: GuideSection[] = [
         body: "If the organiser shares a board link, open it to see courts and scores without signing in.",
       },
       {
-        title: "Check all-time rankings",
-        body: "Tap Rankings from Home to see overall results for registered players across completed sessions. Session-only guests are not included.",
+        title: "Keep results in context",
+        body: "Use the live session table and squad rankings so results stay tied to the right sport, session, and squad.",
       },
     ],
   },

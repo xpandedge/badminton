@@ -14,22 +14,22 @@ function SportBadge() {
   const { sport, isLoaded, openPicker } = useSportPreference();
   if (!isLoaded || !sport) return null;
 
-  const label = sport === "pickleball" ? "PB" : "BD";
+  const label = sport === "pickleball" ? "Pickleball" : "Badminton";
   return (
     <button
       onClick={openPicker}
-      title={`Playing ${sport} — tap to change`}
+      title={`Default sport: ${label}. Tap to change.`}
       style={{
         fontFamily: "var(--font-mono)",
         fontSize: "0.5625rem",
         fontWeight: 700,
         letterSpacing: "0.1em",
         textTransform: "uppercase",
-        padding: "3px 8px",
+        padding: "4px 9px",
         borderRadius: "var(--r-pill)",
         border: "1.5px solid var(--border)",
-        background: "var(--surface-sunken)",
-        color: "var(--text-2)",
+        background: sport === "pickleball" ? "var(--volt-500)" : "var(--ink-800)",
+        color: sport === "pickleball" ? "var(--ink-800)" : "var(--volt-500)",
         cursor: "pointer",
         lineHeight: 1.4,
       }}

@@ -6,6 +6,7 @@ import {
   removeKnownPlayerRsvp,
   removePublicCasualRsvp,
 } from "@/server/sessions/rsvp-public";
+import { RsvpSubmitButton } from "./submit-button";
 
 function namesList(names: Array<{ displayName: string; isPublic?: boolean }>, empty: string) {
   if (names.length === 0) {
@@ -164,12 +165,12 @@ export default async function PublicRsvpPage({
                 ))}
               </select>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                <button name="intent" value="join" type="submit" disabled={roster.knownPlayerOptions.length === 0} style={{ minHeight: 44, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
+                <RsvpSubmitButton name="intent" value="join" disabled={roster.knownPlayerOptions.length === 0} pendingLabel="Updating..." style={{ minHeight: 44, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
                   I'm coming
-                </button>
-                <button name="intent" value="remove" type="submit" disabled={roster.knownPlayerOptions.length === 0} style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
+                </RsvpSubmitButton>
+                <RsvpSubmitButton name="intent" value="remove" disabled={roster.knownPlayerOptions.length === 0} pendingLabel="Updating..." style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
                   I'm away
-                </button>
+                </RsvpSubmitButton>
               </div>
               <p style={{ color: "var(--text-3)", fontSize: "0.75rem", fontWeight: 800 }}>
                 Uses your existing player profile. Regulars can opt out here.
@@ -181,15 +182,15 @@ export default async function PublicRsvpPage({
                   Not listed?
                 </label>
                 <input className="pb-input" name="displayName" placeholder="Add guest name" required minLength={2} style={{ marginTop: 0 }} />
-                <button type="submit" style={{ minHeight: 44, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer" }}>
+                <RsvpSubmitButton pendingLabel="Adding..." style={{ minHeight: 44, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: "pointer" }}>
                   Add guest for this session
-                </button>
+                </RsvpSubmitButton>
               </form>
               <form action={removeAction} style={{ display: "grid", gap: "0.5rem" }}>
                 <input className="pb-input" name="displayName" placeholder="Guest name to remove" required minLength={2} style={{ marginTop: 0 }} />
-                <button type="submit" style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer" }}>
+                <RsvpSubmitButton pendingLabel="Removing..." style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer" }}>
                   Remove guest name
-                </button>
+                </RsvpSubmitButton>
               </form>
               <a href="/dashboard" style={{ color: "var(--emerald-600)", fontSize: "0.8125rem", fontWeight: 900 }}>
                 Want to be remembered next time? Join the squad.

@@ -74,6 +74,15 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [selectedGroupPlayerId, setSelectedGroupPlayerId] = useState("");
   const [addingGroupPlayerId, setAddingGroupPlayerId] = useState<string | null>(null);
   const [isAddingAllPlayers, setIsAddingAllPlayers] = useState(false);
+  const [playerActionBusyId, setPlayerActionBusyId] = useState<string | null>(null);
+  const [isStartingSession, setIsStartingSession] = useState(false);
+  const [isCompletingSession, setIsCompletingSession] = useState(false);
+  const [isResumingSession, setIsResumingSession] = useState(false);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
+  const [isRebalancing, setIsRebalancing] = useState(false);
+  const [disablingCourtId, setDisablingCourtId] = useState<string | null>(null);
+  const [swappingPlayerKey, setSwappingPlayerKey] = useState<string | null>(null);
+  const [isSelfJoining, setIsSelfJoining] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
   const [sessionGuestSkill, setSessionGuestSkill] = useState("unknown");
@@ -244,6 +253,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   // Generate + start are one step from the organiser's point of view — if no
   // schedule exists yet, seed it first, then start immediately.
   const handleStart = async () => {
+    if (isStartingSession) return;
+    setIsStartingSession(true);
     setActionError(null);
     try {
       if (matches.length === 0) {
@@ -266,9 +277,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       }
       await startSession({ sessionId });
     } catch (e: any) { setActionError(e.message); }
+    finally { setIsStartingSession(false); }
   };
 
   const handleRebalance = async (trigger?: string) => {
+    if (isRebalancing) return;
+    setIsRebalancing(true);
     setActionError(null);
     try {
       const res = await rebalanceSession({ sessionId, trigger });
@@ -276,9 +290,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       setRebalanceSummary(data.summary);
       setShowSummaryModal(true);
     } catch (e: any) { setActionError(e.message); }
+    finally { setIsRebalancing(false); }
   };
 
   const handlePlayerStatus = async (sessionPlayerId: string, status: string) => {
+    if (playerActionBusyId !== null) return;
+    setPlayerActionBusyId(sessionPlayerId);
     setActionError(null);
     try {
       const res = await updatePlayerStatus({ sessionId, sessionPlayerId, status });
@@ -294,34 +311,40 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         }
       }
     } catch (e: any) { setActionError(e.message); }
+    finally { setPlayerActionBusyId(null); }
   };
 
   const handleMarkInjured = async (sessionPlayerId: string, displayName: string) => {
-    const confirmed = await requestConfirmation({
-      title: `Step ${displayName} out?`,
-      description: "They will not be selected for more games in this session. Current and completed games stay unchanged.",
-      confirmLabel: "Step out",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    setActionError(null);
+    if (playerActionBusyId !== null) return;
+    setPlayerActionBusyId(sessionPlayerId);
     try {
+      const confirmed = await requestConfirmation({
+        title: `Step ${displayName} out?`,
+        description: "They will not be selected for more games in this session. Current and completed games stay unchanged.",
+        confirmLabel: "Step out",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+      setActionError(null);
       const res = await markPlayerInjured({ sessionId, sessionPlayerId });
       const data = res.data;
       if (data.rebalanceRecommended) {
         await handleRebalance("player_removed");
       }
     } catch (e: any) { setActionError(e.message); }
+    finally { setPlayerActionBusyId(null); }
   };
 
   const handleAddLatePlayer = async () => {
     const picked = groupPlayers.find((p) => p.id === selectedGroupPlayerId);
-    if (!picked) return;
+    if (!picked || addingGroupPlayerId !== null || isAddingAllPlayers) return;
+    setAddingGroupPlayerId(picked.id);
     setActionError(null);
     try {
       await addLatePlayer({ sessionId, playerId: picked.id, displayName: picked.displayName });
       setSelectedGroupPlayerId("");
     } catch (e: any) { setActionError(e.message); }
+    finally { setAddingGroupPlayerId(null); }
   };
 
   const handleAddSessionGuest = async (e: React.FormEvent) => {
@@ -349,30 +372,35 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   };
 
   const handleDeleteSession = async () => {
-    const confirmed = await requestConfirmation({
-      title: `Cancel ${session.name}?`,
-      description: "The session will close and can no longer be played. Completed scores will stay recorded.",
-      confirmLabel: "Cancel session",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    setActionError(null);
+    if (isDeletingSession) return;
+    setIsDeletingSession(true);
     try {
+      const confirmed = await requestConfirmation({
+        title: `Cancel ${session.name}?`,
+        description: "The session will close and can no longer be played. Completed scores will stay recorded.",
+        confirmLabel: "Cancel session",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+      setActionError(null);
       await deleteSession({ sessionId });
       window.location.href = `/groups/${session.groupId}`;
     } catch (err: any) { setActionError(err.message); }
+    finally { setIsDeletingSession(false); }
   };
 
   const handleDisableCourt = async (courtId: string, courtName: string) => {
-    const confirmed = await requestConfirmation({
-      title: `Disable ${courtName}?`,
-      description: "No more games will be assigned to this court. Current and completed games stay unchanged.",
-      confirmLabel: "Disable court",
-      tone: "danger",
-    });
-    if (!confirmed) return;
-    setActionError(null);
+    if (disablingCourtId !== null) return;
+    setDisablingCourtId(courtId);
     try {
+      const confirmed = await requestConfirmation({
+        title: `Disable ${courtName}?`,
+        description: "No more games will be assigned to this court. Current and completed games stay unchanged.",
+        confirmLabel: "Disable court",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+      setActionError(null);
       const res = await disableCourt({ sessionId, courtId });
       if (!isRoundRobinSession && (res.data as any).rebalanceRecommended) {
         const updateGames = await requestConfirmation({
@@ -385,14 +413,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         }
       }
     } catch (e: any) { setActionError(e.message); }
+    finally { setDisablingCourtId(null); }
   };
 
   // One click: picking a replacement in the dropdown swaps immediately.
   const handleSwapPlayer = async (matchId: string, outPlayerId: string, inPlayerId: string) => {
+    const actionKey = `${matchId}:${outPlayerId}`;
+    if (swappingPlayerKey !== null) return;
+    setSwappingPlayerKey(actionKey);
     setActionError(null);
     try {
       await swapPlayers({ sessionId, matchId, outPlayerId, inPlayerId });
     } catch (e: any) { setActionError(e.message); }
+    finally { setSwappingPlayerKey(null); }
   };
 
   // Points are always optional — a winner tap alone is enough to finish a
@@ -539,16 +572,39 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     : null;
 
   const handleSelfJoin = async () => {
-    if (!currentUserGroupPlayer) return;
+    if (!currentUserGroupPlayer || isSelfJoining) return;
+    setIsSelfJoining(true);
     setActionError(null);
     try {
       const res = await addGroupMemberToSession(sessionId, currentUserGroupPlayer.id);
       if (!res.ok) throw new Error(res.message);
       if (isLive && !isRoundRobinSession) await handleRebalance("player_added");
     } catch (e: any) { setActionError(e.message); }
+    finally { setIsSelfJoining(false); }
+  };
+
+  const handleCompleteSession = async () => {
+    if (isCompletingSession) return;
+    setIsCompletingSession(true);
+    setActionError(null);
+    try {
+      await completeSession({ sessionId });
+    } catch (e: any) { setActionError(e.message); }
+    finally { setIsCompletingSession(false); }
+  };
+
+  const handleResumeSession = async () => {
+    if (isResumingSession) return;
+    setIsResumingSession(true);
+    setActionError(null);
+    try {
+      await resumeSession({ sessionId });
+    } catch (e: any) { setActionError(e.message); }
+    finally { setIsResumingSession(false); }
   };
 
   const handleAddGroupPlayer = async (player: { id: string; displayName: string }) => {
+    if (addingGroupPlayerId !== null || isAddingAllPlayers) return;
     setAddingGroupPlayerId(player.id);
     setActionError(null);
     try {
@@ -563,7 +619,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   };
 
   const handleAddAllGroupPlayers = async () => {
-    if (availableGroupPlayers.length === 0 || isAddingAllPlayers) return;
+    if (availableGroupPlayers.length === 0 || isAddingAllPlayers || addingGroupPlayerId !== null) return;
     setIsAddingAllPlayers(true);
     setActionError(null);
     const results = await Promise.allSettled(
@@ -631,10 +687,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             <select
               value=""
               onChange={(e) => { if (e.target.value) handleSwapPlayer(m.id, p.playerId, e.target.value); }}
+              disabled={swappingPlayerKey !== null}
+              aria-busy={swappingPlayerKey === `${m.id}:${p.playerId}` || undefined}
               className="pb-input"
-              style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem", maxWidth: 150 }}
+              style={{ height: 34, borderRadius: "var(--r-md)", padding: "0 0.5rem", fontSize: "0.75rem", maxWidth: 150, opacity: swappingPlayerKey === `${m.id}:${p.playerId}` ? 0.55 : 1 }}
             >
-              <option value="">Swap with...</option>
+              <option value="">{swappingPlayerKey === `${m.id}:${p.playerId}` ? "Swapping..." : "Swap with..."}</option>
               {eligibleForSwap.map((ep) => (
                 <option key={ep.playerId} value={ep.playerId}>{ep.displayName}</option>
               ))}
@@ -1024,21 +1082,26 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           <button
             data-testid="start-session-btn"
             onClick={handleStart}
-            disabled={!canStartRoundRobin}
-            style={{ ...primaryActionStyle, opacity: canStartRoundRobin ? 1 : 0.5, cursor: canStartRoundRobin ? primaryActionStyle.cursor : "default" }}
+            disabled={!canStartRoundRobin || isStartingSession}
+            aria-busy={isStartingSession || undefined}
+            style={{ ...primaryActionStyle, opacity: canStartRoundRobin && !isStartingSession ? 1 : 0.5, cursor: canStartRoundRobin && !isStartingSession ? primaryActionStyle.cursor : "default" }}
           >
-            Start Playing
+            {isStartingSession ? "Starting..." : "Start Playing"}
           </button>
         )}
         {canControlSession && session.status === "active" && (
-          <button data-testid="complete-session-btn" onClick={() => completeSession({ sessionId })} style={{ ...secondaryActionStyle, color: "var(--danger)" }}>Complete Session</button>
+          <button data-testid="complete-session-btn" onClick={handleCompleteSession} disabled={isCompletingSession} aria-busy={isCompletingSession || undefined} style={{ ...secondaryActionStyle, color: "var(--danger)", cursor: isCompletingSession ? "default" : "pointer", opacity: isCompletingSession ? 0.55 : 1 }}>
+            {isCompletingSession ? "Completing..." : "Complete Session"}
+          </button>
         )}
         {canControlSession && session.status === "paused" && (
-          <button onClick={() => resumeSession({ sessionId })} style={primaryActionStyle}>Resume Playing</button>
+          <button onClick={handleResumeSession} disabled={isResumingSession} aria-busy={isResumingSession || undefined} style={{ ...primaryActionStyle, cursor: isResumingSession ? "default" : "pointer", opacity: isResumingSession ? 0.55 : 1 }}>
+            {isResumingSession ? "Resuming..." : "Resume Playing"}
+          </button>
         )}
         {canControlSession && (
-          <button onClick={handleDeleteSession} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid rgba(240,62,62,0.3)" }}>
-            Cancel / Delete Session
+          <button onClick={handleDeleteSession} disabled={isDeletingSession} aria-busy={isDeletingSession || undefined} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid rgba(240,62,62,0.3)", cursor: isDeletingSession ? "default" : "pointer", opacity: isDeletingSession ? 0.55 : 1 }}>
+            {isDeletingSession ? "Cancelling..." : "Cancel / Delete Session"}
           </button>
         )}
         </div>
@@ -1075,9 +1138,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {court.isActive && (
                   <button
                     onClick={() => handleDisableCourt(court.courtId, court.name)}
-                    style={{ border: "none", background: "transparent", color: "var(--danger)", fontWeight: 900, cursor: "pointer" }}
+                    disabled={disablingCourtId !== null}
+                    aria-busy={disablingCourtId === court.courtId || undefined}
+                    style={{ border: "none", background: "transparent", color: "var(--danger)", fontWeight: 900, cursor: disablingCourtId !== null ? "default" : "pointer", opacity: disablingCourtId === court.courtId ? 0.55 : 1 }}
                   >
-                    Disable
+                    {disablingCourtId === court.courtId ? "Disabling..." : "Disable"}
                   </button>
                 )}
                 {!court.isActive && <span style={{ fontSize: "0.75rem" }}>Disabled</span>}
@@ -1120,9 +1185,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                           aria-label={`Remove ${player.displayName} from this session`}
                           title="Remove from session"
                           onClick={() => handlePlayerStatus(player.id, "removed")}
-                          style={{ width: 24, height: 24, display: "inline-grid", placeItems: "center", padding: 0, border: 0, borderRadius: "50%", background: "transparent", color: "var(--danger)", fontSize: "1.1rem", lineHeight: 1, cursor: "pointer" }}
+                          disabled={playerActionBusyId !== null}
+                          aria-busy={playerActionBusyId === player.id || undefined}
+                          style={{ width: 24, height: 24, display: "inline-grid", placeItems: "center", padding: 0, border: 0, borderRadius: "50%", background: "transparent", color: "var(--danger)", fontSize: "1.1rem", lineHeight: 1, cursor: playerActionBusyId !== null ? "default" : "pointer", opacity: playerActionBusyId === player.id ? 0.55 : 1 }}
                         >
-                          &times;
+                          {playerActionBusyId === player.id ? "..." : "\u00d7"}
                         </button>
                       )}
                     </span>
@@ -1467,6 +1534,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                     <button
                       data-testid="injured-btn"
                       onClick={() => handleMarkInjured(p.id, p.displayName)}
+                      disabled={playerActionBusyId !== null}
+                      aria-busy={playerActionBusyId === p.id || undefined}
                       style={{
                         height: 34,
                         padding: "0 0.625rem",
@@ -1475,13 +1544,21 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                         background: "transparent",
                         color: "var(--danger)",
                         fontWeight: 900,
-                        cursor: "pointer",
+                        cursor: playerActionBusyId !== null ? "default" : "pointer",
                         fontSize: "0.75rem",
+                        opacity: playerActionBusyId === p.id ? 0.55 : 1,
                       }}
                     >
-                      🚑 Injured / Step Out
+                      {playerActionBusyId === p.id ? "Updating..." : "🚑 Injured / Step Out"}
                     </button>
-                    <button onClick={() => handlePlayerStatus(p.id, "removed")} style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem", color: "var(--danger)" }}>Remove</button>
+                    <button
+                      onClick={() => handlePlayerStatus(p.id, "removed")}
+                      disabled={playerActionBusyId !== null}
+                      aria-busy={playerActionBusyId === p.id || undefined}
+                      style={{ ...secondaryActionStyle, height: 34, fontSize: "0.75rem", color: "var(--danger)", cursor: playerActionBusyId !== null ? "default" : "pointer", opacity: playerActionBusyId === p.id ? 0.55 : 1 }}
+                    >
+                      {playerActionBusyId === p.id ? "Removing..." : "Remove"}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1498,7 +1575,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {otherPlayers.map((p) => (
                   <div key={p.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "0.75rem", alignItems: "center", padding: "0.75rem", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", background: "var(--surface-sunken)" }}>
                     <span style={{ color: "var(--text-2)", fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName} <span style={{ color: "var(--text-3)" }}>({titleCase(p.status)})</span></span>
-                    <button onClick={() => handlePlayerStatus(p.id, "active")} style={{ ...primaryActionStyle, height: 34, fontSize: "0.75rem" }}>Re-activate</button>
+                    <button
+                      onClick={() => handlePlayerStatus(p.id, "active")}
+                      disabled={playerActionBusyId !== null}
+                      aria-busy={playerActionBusyId === p.id || undefined}
+                      style={{ ...primaryActionStyle, height: 34, fontSize: "0.75rem", cursor: playerActionBusyId !== null ? "default" : "pointer", opacity: playerActionBusyId === p.id ? 0.55 : 1 }}
+                    >
+                      {playerActionBusyId === p.id ? "Updating..." : "Re-activate"}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1537,13 +1621,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                   <button
                     data-testid="add-player-submit"
                     onClick={handleAddLatePlayer}
-                    disabled={!selectedGroupPlayerId || available.length === 0}
+                    disabled={!selectedGroupPlayerId || available.length === 0 || addingGroupPlayerId !== null || isAddingAllPlayers}
+                    aria-busy={addingGroupPlayerId === selectedGroupPlayerId || undefined}
                     style={{
                       ...primaryActionStyle,
-                      opacity: selectedGroupPlayerId && available.length > 0 ? 1 : 0.45,
+                      opacity: addingGroupPlayerId === selectedGroupPlayerId ? 0.55 : selectedGroupPlayerId.length > 0 && available.length > 0 && !isAddingAllPlayers ? 1 : 0.45,
                     }}
                   >
-                    Add Player
+                    {addingGroupPlayerId === selectedGroupPlayerId ? "Adding..." : "Add Player"}
                   </button>
                 </div>
               );

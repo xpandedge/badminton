@@ -75,6 +75,13 @@ export interface SitOutPlan {
   tied: string[];
   /** How many of `tied` still have to sit. */
   remaining: number;
+  /**
+   * Players exactly one sit-out past the fair line who could take another.
+   * Sitting one of these is a real cost, paid only when it buys a materially
+   * fresher line-up (see round.ts). Never includes a player who just sat —
+   * the no-consecutive-sit-outs shield is not for sale.
+   */
+  relaxed: string[];
 }
 
 export function planSitOuts(
@@ -83,7 +90,7 @@ export function planSitOuts(
   const capacity = courtCount * PLAYERS_PER_MATCH;
   const playableCount = Math.min(Math.floor(available.length / PLAYERS_PER_MATCH) * PLAYERS_PER_MATCH, capacity);
   const sitCount = available.length - playableCount;
-  if (sitCount <= 0) return { mustSit: [], mustPlay: [...available], tied: [], remaining: 0 };
+  if (sitCount <= 0) return { mustSit: [], mustPlay: [...available], tied: [], remaining: 0, relaxed: [] };
 
   const prevRound = currentRoundNumber - 1;
   const ranked = [...available].sort((x, y) => strictCompare(s, x, y, prevRound));
@@ -98,7 +105,15 @@ export function planSitOuts(
     else if (cmp === 0) tied.push(id);
     else mustPlay.push(id);
   }
-  return { mustSit, mustPlay, tied, remaining: sitCount - mustSit.length };
+
+  const boundarySitOuts = s.sitOuts.get(boundary) ?? 0;
+  const relaxed = mustPlay.filter((id) => {
+    const justSat = prevRound > 0 && s.lastSitOutRound.get(id) === prevRound;
+    if (justSat) return false;                              // shield is never for sale
+    return (s.sitOuts.get(id) ?? 0) === boundarySitOuts + 1; // exactly one past the line
+  });
+
+  return { mustSit, mustPlay, tied, remaining: sitCount - mustSit.length, relaxed };
 }
 
 export function selectSitOuts(

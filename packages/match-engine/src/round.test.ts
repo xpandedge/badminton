@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildRound } from "./round.js";
-import { createInitialState, recordMatch } from "./state.js";
+import { createInitialState, pairKey, recordMatch } from "./state.js";
 import type { EnginePlayer, EngineCourt } from "./types.js";
 
 const players: EnginePlayer[] = Array.from({ length: 8 }, (_, i) => ({
@@ -155,5 +155,69 @@ describe("buildRound — who plays is chosen on pairing history, not just sit-ou
     const sat = sitOuts.map((s) => s.playerId);
     expect(sat).not.toContain("a");
     expect(sat).not.toContain("b");
+  });
+});
+
+describe("buildRound — spending sit-out fairness only when it buys something", () => {
+  const oneCourt: EngineCourt[] = [{ courtId: "c1", name: "Court 1", courtNumber: 1 }];
+  const six: EnginePlayer[] = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+    playerId: id, displayName: id, skillLevel: "unknown", availableFromRound: 1,
+  }));
+
+  it("lets a player sit a second time when it is the only way to freshen the court", () => {
+    const state = createInitialState(six);
+    // e has faced everyone repeatedly; a,b,c,d and f are fresh with each other.
+    // Strict fairness keeps e on (they are a sit-out ahead), which forces a
+    // stale match however the other three seats are filled.
+    for (const other of ["a", "b", "c", "d"]) state.opponentCount.set(pairKey("e", other), 5);
+    for (const id of ["a", "b", "c", "d"]) { state.sitOuts.set(id, 0); state.gamesPlayed.set(id, 5); }
+    for (const id of ["e", "f"]) { state.sitOuts.set(id, 1); state.gamesPlayed.set(id, 5); }
+
+    const { matches, sitOuts } = buildRound(state, six, oneCourt, 7);
+    const onCourt = new Set([...matches[0]!.teamA, ...matches[0]!.teamB]);
+    expect(onCourt.has("e")).toBe(false);   // worth a second sit-out
+    expect(sitOuts.length).toBe(2);
+  });
+
+  it("keeps sit-outs strict when the fresher line-up is barely fresher", () => {
+    const state = createInitialState(six);
+    // Nobody has much history — no line-up is meaningfully fresher than another.
+    recordMatch(state, 1, ["a", "b"], ["c", "d"]);
+    for (const id of ["a", "b", "c", "d"]) { state.sitOuts.set(id, 0); state.gamesPlayed.set(id, 1); }
+    for (const id of ["e", "f"]) { state.sitOuts.set(id, 1); state.gamesPlayed.set(id, 1); }
+
+    const { sitOuts } = buildRound(state, six, oneCourt, 3);
+    const sat = sitOuts.map((s) => s.playerId);
+    // e and f already carry a sit-out each; with nothing real to gain they must play.
+    expect(sat).not.toContain("e");
+    expect(sat).not.toContain("f");
+  });
+
+  it("never spends the shield — a player who just sat still plays", () => {
+    const state = createInitialState(six);
+    for (let round = 1; round <= 5; round++) recordMatch(state, round, ["a", "b"], ["c", "d"]);
+    for (const id of ["a", "b", "c", "d"]) { state.sitOuts.set(id, 0); state.gamesPlayed.set(id, 5); }
+    for (const id of ["e", "f"]) { state.sitOuts.set(id, 1); state.gamesPlayed.set(id, 4); }
+    state.lastSitOutRound.set("e", 6);
+    state.lastSitOutRound.set("f", 6);
+
+    const { sitOuts } = buildRound(state, six, oneCourt, 7);
+    const sat = sitOuts.map((s) => s.playerId);
+    expect(sat).not.toContain("e");
+    expect(sat).not.toContain("f");
+  });
+
+  it("never lets sit-out counts drift more than one past the fair line", () => {
+    const state = createInitialState(six);
+    for (let round = 1; round <= 5; round++) recordMatch(state, round, ["a", "b"], ["c", "d"]);
+    for (const id of ["a", "b", "c", "d"]) { state.sitOuts.set(id, 0); state.gamesPlayed.set(id, 5); }
+    state.sitOuts.set("e", 2); state.gamesPlayed.set("e", 3);
+    state.sitOuts.set("f", 2); state.gamesPlayed.set("f", 3);
+
+    const { sitOuts } = buildRound(state, six, oneCourt, 7);
+    const sat = sitOuts.map((s) => s.playerId);
+    // e and f are two sit-outs clear of the line — too far to spend, however stale a,b,c,d are.
+    expect(sat).not.toContain("e");
+    expect(sat).not.toContain("f");
   });
 });

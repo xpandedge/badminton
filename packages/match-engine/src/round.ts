@@ -232,29 +232,57 @@ function chooseWhoPlays(
     return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
   }
 
-  let bestSitters: string[] | null = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  const pick = (start: number, chosen: string[]) => {
-    if (chosen.length === plan.remaining) {
-      const sitters = [...plan.mustSit, ...chosen];
-      const sittingSet = new Set(sitters);
-      const lineup = available.filter((id) => !sittingSet.has(id));
-      // Both halves matter. The line-up is who meets now; the sitters are who
-      // meet next, because the sit-out shield sends them back on together and
-      // in continuous play only one court frees at a time.
-      const score = groupFamiliarity(state, lineup, w) + groupFamiliarity(state, sitters, w);
-      if (score < bestScore) {          // ties keep the first, i.e. seeded order
-        bestScore = score;
-        bestSitters = [...chosen];
-      }
-      return;
-    }
-    for (let i = start; i < tied.length; i++) pick(i + 1, [...chosen, tied[i]!]);
+  // Both halves matter. The line-up is who meets now; the sitters are who meet
+  // next, because the shield sends them back on together and in continuous play
+  // only one court frees at a time.
+  const scoreSitters = (sitters: string[]) => {
+    const sittingSet = new Set(sitters);
+    const lineup = available.filter((id) => !sittingSet.has(id));
+    return groupFamiliarity(state, lineup, w) + groupFamiliarity(state, sitters, w);
   };
-  pick(0, []);
 
-  const sitting = byOrder([...plan.mustSit, ...(bestSitters ?? tied.slice(0, plan.remaining))]);
+  const search = (fixed: string[], from: string[], take: number) => {
+    let bestSitters: string[] | null = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const pick = (start: number, chosen: string[]) => {
+      if (chosen.length === take) {
+        const sitters = [...fixed, ...chosen];
+        const score = scoreSitters(sitters);
+        if (score < bestScore) {        // ties keep the first, i.e. seeded order
+          bestScore = score;
+          bestSitters = sitters;
+        }
+        return;
+      }
+      for (let i = start; i < from.length; i++) pick(i + 1, [...chosen, from[i]!]);
+    };
+    pick(0, []);
+    return bestSitters === null ? null : { sitters: bestSitters as string[], score: bestScore };
+  };
+
+  const strict = search(plan.mustSit, tied, plan.remaining);
+
+  // Spending a sit-out: one player already past the fair line takes another,
+  // freeing a seat for someone who would otherwise have sat. Only worth it if
+  // it buys more than a whole repeated partnership's worth of freshness —
+  // otherwise fairness wins and nothing is spent.
+  let best = strict;
+  if (strict && plan.relaxed.length > 0) {
+    for (const candidate of byOrder(plan.relaxed)) {
+      // Drop the sitter who is least owed a rest to make room for `candidate`.
+      const droppable = plan.remaining >= 1 ? null : plan.mustSit[plan.mustSit.length - 1] ?? null;
+      const fixed = droppable === null
+        ? plan.mustSit
+        : plan.mustSit.filter((id) => id !== droppable);
+      const take = Math.max(0, plan.remaining - 1);
+      const relaxedBest = search([...fixed, candidate], tied, take);
+      if (relaxedBest && strict.score - relaxedBest.score >= w.repeatPartner) {
+        if (!best || relaxedBest.score < best.score) best = relaxedBest;
+      }
+    }
+  }
+
+  const sitting = byOrder(best ? best.sitters : [...plan.mustSit, ...tied.slice(0, plan.remaining)]);
   const sittingSet = new Set(sitting);
   return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
 }

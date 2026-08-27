@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveWinner, leaderboardCompare } from "./scoring.js";
+import { deriveWinner, leaderboardCompare, winRate } from "./scoring.js";
 
 describe("deriveWinner — points are always optional, a winner is always required", () => {
   it("derives from points when given, regardless of mode; ties rejected", () => {
@@ -16,16 +16,51 @@ describe("deriveWinner — points are always optional, a winner is always requir
   });
 });
 
+describe("winRate", () => {
+  it("is the won/played ratio, and zero for a player with no games", () => {
+    expect(winRate({ wins: 3, gamesPlayed: 4 })).toBeCloseTo(0.75);
+    expect(winRate({ wins: 0, gamesPlayed: 0 })).toBe(0);
+  });
+});
+
 describe("leaderboardCompare", () => {
-  it("points mode: wins, then point diff, then games", () => {
+  it("ranks on win% first, not on raw wins", () => {
+    const a = { wins: 2, pointDifference: 0, gamesPlayed: 2, sitOutCount: 0 }; // 100%
+    const b = { wins: 5, pointDifference: 0, gamesPlayed: 8, sitOutCount: 0 }; // 62.5%
+    expect(leaderboardCompare(a, b, "points")).toBeLessThan(0);      // a ranks first
+    expect(leaderboardCompare(a, b, "winner_only")).toBeLessThan(0); // a ranks first
+  });
+
+  it("breaks an equal win% on raw wins, so more games at the same rate ranks ahead", () => {
+    const a = { wins: 4, pointDifference: 0, gamesPlayed: 8, sitOutCount: 0 }; // 50%
+    const b = { wins: 1, pointDifference: 0, gamesPlayed: 2, sitOutCount: 0 }; // 50%
+    expect(leaderboardCompare(a, b, "points")).toBeLessThan(0);
+    expect(leaderboardCompare(a, b, "winner_only")).toBeLessThan(0);
+  });
+
+  it("compares win% exactly, without floating-point drift", () => {
+    const a = { wins: 1, pointDifference: 0, gamesPlayed: 3, sitOutCount: 0 };
+    const b = { wins: 2, pointDifference: 0, gamesPlayed: 6, sitOutCount: 0 };
+    // identical rate → falls through to raw wins, where b leads
+    expect(leaderboardCompare(a, b, "points")).toBeGreaterThan(0);
+  });
+
+  it("ranks a player with no games behind anyone who has played", () => {
+    const played = { wins: 0, pointDifference: -9, gamesPlayed: 3, sitOutCount: 0 }; // 0%
+    const unplayed = { wins: 0, pointDifference: 0, gamesPlayed: 0, sitOutCount: 0 };
+    expect(leaderboardCompare(played, unplayed, "points")).toBeLessThan(0);
+    expect(leaderboardCompare(played, unplayed, "winner_only")).toBeLessThan(0);
+  });
+
+  it("points mode: equal win% and wins, then point diff", () => {
     const a = { wins: 3, pointDifference: 5, gamesPlayed: 4, sitOutCount: 0 };
     const b = { wins: 3, pointDifference: 9, gamesPlayed: 4, sitOutCount: 0 };
     expect(leaderboardCompare(a, b, "points")).toBeGreaterThan(0); // b ranks first
   });
-  it("winner_only mode: ignores point diff, uses wins, games, fewer sit-outs", () => {
-    const a = { wins: 3, pointDifference: 0, gamesPlayed: 5, sitOutCount: 1 };
+  it("winner_only mode: ignores point diff, uses fewer sit-outs once rate and wins tie", () => {
+    const a = { wins: 3, pointDifference: 0, gamesPlayed: 4, sitOutCount: 1 };
     const b = { wins: 3, pointDifference: 0, gamesPlayed: 4, sitOutCount: 0 };
-    expect(leaderboardCompare(a, b, "winner_only")).toBeLessThan(0); // a ranks first (more games)
+    expect(leaderboardCompare(a, b, "winner_only")).toBeGreaterThan(0); // b ranks first (fewer sit-outs)
   });
 
   it("points mode ignores sitOutCount; falls to displayName when fully tied", () => {

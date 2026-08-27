@@ -255,23 +255,30 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
               </div>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{Math.min(data.leaderboard.length, 12)} players</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "2rem minmax(0, 1fr) 3.25rem 4.5rem", gap: "0.6rem", padding: "0 0.15rem 0.35rem", fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            <div style={{ ...boardLeaderGrid(data.scoringMode), padding: "0 0.15rem 0.35rem", fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "var(--text-3)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
               <span>#</span>
               <span>Player</span>
-              <span style={{ textAlign: "right" }}>Wins</span>
-              <span style={{ textAlign: "right" }}>{data.scoringMode === "points" ? "Diff" : "Games"}</span>
+              <span style={{ textAlign: "right" }}>Grade</span>
+              <span style={{ textAlign: "right" }}>G</span>
+              <span style={{ textAlign: "right" }}>W</span>
+              <span style={{ textAlign: "right" }}>L</span>
+              <span style={{ textAlign: "right" }}>Win%</span>
+              {data.scoringMode === "points" && <span style={{ textAlign: "right" }}>PD</span>}
             </div>
             {data.leaderboard.slice(0, 12).map((row, i) => {
               const mine = row.playerId === meId;
+              const pct = row.gamesPlayed > 0 ? Math.round((row.wins / row.gamesPlayed) * 100) : 0;
               return (
-                <div key={row.playerId} style={{ display: "grid", gridTemplateColumns: "2rem minmax(0, 1fr) 3.25rem 4.5rem", gap: "0.6rem", alignItems: "center", padding: "0.7rem 0.15rem", borderBottom: i === Math.min(data.leaderboard.length, 12) - 1 ? "none" : "1px solid var(--border)", background: mine ? "rgba(198,241,53,0.11)" : "transparent", borderRadius: mine ? "var(--r-md)" : 0 }}>
+                <div key={row.playerId} style={{ ...boardLeaderGrid(data.scoringMode), alignItems: "center", padding: "0.7rem 0.15rem", borderBottom: i === Math.min(data.leaderboard.length, 12) - 1 ? "none" : "1px solid var(--border)", background: mine ? "rgba(198,241,53,0.11)" : "transparent", borderRadius: mine ? "var(--r-md)" : 0 }}>
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 900, color: i === 0 ? "var(--volt-600)" : "var(--text-3)", fontSize: "0.8125rem" }}>{i + 1}</span>
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: mine ? 900 : 700, color: mine ? "var(--volt-600)" : "var(--text-1)", fontSize: "0.9rem" }}>{row.displayName}{mine ? " (you)" : ""}</span>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)", textAlign: "right" }}>{row.wins}W</span>
-                  {data.scoringMode === "points" ? (
+                  <span style={{ fontFamily: "var(--font-display-tight)", fontSize: "0.8125rem", fontWeight: 900, color: row.grade ? "var(--ink-800)" : "var(--text-3)", textAlign: "right" }}>{row.grade ?? "–"}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, color: "var(--text-1)", textAlign: "right" }}>{row.gamesPlayed}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, color: "var(--volt-600)", textAlign: "right" }}>{row.wins}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)", textAlign: "right" }}>{row.losses}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: pct >= 50 ? "var(--volt-600)" : "var(--text-2)" }}>{pct}%</span>
+                  {data.scoringMode === "points" && (
                     <span style={{ fontFamily: "var(--font-mono)", fontWeight: 900, fontSize: "0.875rem", textAlign: "right", color: row.pointDifference > 0 ? "var(--volt-600)" : row.pointDifference < 0 ? "var(--danger)" : "var(--text-1)" }}>{row.pointDifference > 0 ? `+${row.pointDifference}` : row.pointDifference}</span>
-                  ) : (
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-3)", textAlign: "right" }}>{row.gamesPlayed}G</span>
                   )}
                 </div>
               );
@@ -281,6 +288,15 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
       </main>
     </div>
   );
+}
+
+/** One column template for the standings header and its rows. */
+function boardLeaderGrid(scoringMode: string): React.CSSProperties {
+  return {
+    display: "grid",
+    gridTemplateColumns: `1.75rem minmax(0, 1fr) 2.75rem 2.25rem 2.25rem 2.25rem 3rem${scoringMode === "points" ? " 3.25rem" : ""}`,
+    gap: "0.4rem",
+  };
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {

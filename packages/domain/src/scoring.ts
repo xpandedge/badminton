@@ -28,13 +28,33 @@ export interface LeaderboardRow {
   displayName?: string;
 }
 
+/** Share of games won, in [0,1]. A player with no games scores 0. */
+export function winRate(row: Pick<LeaderboardRow, "wins" | "gamesPlayed">): number {
+  if (row.gamesPlayed <= 0) return 0;
+  return row.wins / row.gamesPlayed;
+}
+
 /**
  * Returns >0 if b ranks ahead of a (sort comparator semantics).
- * DELTA_SPEC D1 tiebreakers:
- *   points:      wins → pointDifference → gamesPlayed → displayName
- *   winner_only: wins → gamesPlayed → fewer sitOuts → displayName
+ *
+ * Standings lead on win rate, not on raw wins, so a player who sits out rounds
+ * is not punished for the games they never got. Raw wins is the first
+ * tie-break, which keeps the bigger sample ahead at an equal rate.
+ * Tiebreakers:
+ *   points:      win% → wins → pointDifference → gamesPlayed → displayName
+ *   winner_only: win% → wins → gamesPlayed → fewer sitOuts → displayName
  */
 export function leaderboardCompare(a: LeaderboardRow, b: LeaderboardRow, mode: ScoringMode): number {
+  const aGames = Math.max(0, a.gamesPlayed);
+  const bGames = Math.max(0, b.gamesPlayed);
+  if (aGames === 0 || bGames === 0) {
+    // Nobody who has not played yet outranks somebody who has, whatever their record.
+    if (aGames !== bGames) return bGames - aGames;
+  } else {
+    // Cross-multiplied so equal ratios compare exactly (1/3 vs 2/6), no float drift.
+    const byRate = b.wins * aGames - a.wins * bGames;
+    if (byRate !== 0) return byRate;
+  }
   if (b.wins !== a.wins) return b.wins - a.wins;
   if (mode === "points") {
     if (b.pointDifference !== a.pointDifference) return b.pointDifference - a.pointDifference;

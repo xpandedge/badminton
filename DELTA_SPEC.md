@@ -25,9 +25,16 @@ payload (winner_only mode):  { winnerTeam: "A" | "B" }
 
 ### Leaderboard tie-break (replaces §12.12 sort)
 ```text
-points mode:       wins → pointDifference → gamesPlayed
-winner_only mode:  wins → gamesPlayed → fewer sitOuts → displayName
+points mode:       win% → wins → pointDifference → gamesPlayed → displayName
+winner_only mode:  win% → wins → gamesPlayed → fewer sitOuts → displayName
 ```
+- Standings lead on **win rate**, not raw wins (revised 2026-08-27): a player who
+  sits out rounds is not punished for games they never got. Raw wins is the first
+  tie-break, keeping the larger sample ahead at an equal rate.
+- `win%` is `wins / gamesPlayed`; a player with no games ranks behind everyone
+  who has played, rather than tying at 0%.
+- Rates compare cross-multiplied (`b.wins * aGames - a.wins * bGames`) so equal
+  ratios such as 1/3 and 2/6 compare exactly, with no floating-point drift.
 - In `winner_only`, hide `pointsFor / pointsAgainst / pointDifference` columns.
 - Match doc keeps `teamAScore/teamBScore = null` in winner_only; never sort on them.
 

@@ -34,6 +34,8 @@ export interface BoardCourt {
 export interface BoardLeaderRow {
   playerId: string;
   displayName: string;
+  /** Squad grade (A+ … D) for members; null for guests, who have no squad record. */
+  grade: string | null;
   wins: number;
   losses: number;
   gamesPlayed: number;
@@ -75,13 +77,23 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     (session.courts as Array<{ courtId: string; name: string }>).map((c) => [c.courtId, c.name]),
   );
 
-  const [playerSnap, matchSnap] = await Promise.all([
+  const [playerSnap, matchSnap, squadPlayerSnap] = await Promise.all([
     db.collection(`sessions/${sessionId}/players`).get(),
     db.collection(`sessions/${sessionId}/matches`).get(),
+    // Grades live on the squad player, not the session player (squad-rating.ts).
+    session.groupId
+      ? db.collection(`groups/${session.groupId}/players`).get()
+      : Promise.resolve(null),
   ]);
 
+  const gradeByPlayerId = new Map<string, string>();
+  for (const doc of squadPlayerSnap?.docs ?? []) {
+    const grade = doc.data().squadGrade;
+    if (typeof grade === "string" && grade) gradeByPlayerId.set(doc.id, grade);
+  }
+
   const roster: BoardPlayer[] = [];
-  const leaderRows: BoardLeaderRow[] = [];
+  const leaderRows: Array<BoardLeaderRow & { sitOutCount: number }> = [];
   for (const doc of playerSnap.docs) {
     const p = doc.data();
     const status = (p.status as string) ?? "active";
@@ -95,19 +107,20 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
       leaderRows.push({
         playerId: doc.id,
         displayName: p.displayName ?? "Player",
+        grade: gradeByPlayerId.get(doc.id) ?? null,
         wins: p.wins ?? 0,
         losses: p.losses ?? 0,
         gamesPlayed,
         pointDifference: p.pointDifference ?? pointsFor - pointsAgainst,
+        sitOutCount: p.sitOutCount ?? 0,
       });
     }
   }
   roster.sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   const leaderboard = leaderRows
-    .map((r) => ({ r, key: { ...r, sitOutCount: 0 } as LeaderboardRow }))
-    .sort((a, b) => leaderboardCompare(a.key, b.key, scoringMode))
-    .map((x) => x.r);
+    .sort((a, b) => leaderboardCompare(a as LeaderboardRow, b as LeaderboardRow, scoringMode))
+    .map(({ sitOutCount: _sitOutCount, ...row }) => row);
 
   const matches: BoardMatch[] = matchSnap.docs.map((doc) => {
     const m = doc.data();

@@ -468,7 +468,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const activePlayers = players.filter((p) => p.status === "active" || p.status === "checked_in");
   const otherPlayers = players.filter((p) => p.status !== "active" && p.status !== "checked_in");
-  const sessionPlayerIds = new Set(players.flatMap((player) => [player.id, player.playerId]));
+  const sessionPlayerIds = new Set(
+    players
+      .filter((player) => player.status !== "left" && player.status !== "removed")
+      .flatMap((player) => [player.id, player.playerId]),
+  );
   const availableGroupPlayers = groupPlayers.filter(
     (player) => !sessionPlayerIds.has(player.id) && !sessionPlayerIds.has(player.userId ?? "__none__"),
   );
@@ -1506,8 +1510,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               Add Late Player
             </h3>
             {(() => {
-              const sessionPlayerIds = new Set(players.map((p) => p.id));
-              const available = groupPlayers.filter((gp) => !sessionPlayerIds.has(gp.id));
+              const available = availableGroupPlayers;
               if (groupPlayers.length === 0) {
                 return (
                   <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>

@@ -20,6 +20,8 @@ The existing live-session controls remain authoritative. Admins can remove a pla
 
 Before play starts, each active player chip in `Get players on court` includes an admin-only `x` control. The control marks that player `removed` through the existing status action, so the player disappears from the active court-ready list while their session history remains intact. The chip control is hidden for active and paused sessions.
 
+In draft and scheduled sessions, players marked `left` or `removed` are available again in the squad-player picker and the add-all flow. Active and waiting session players remain excluded from those add lists.
+
 ## Data Flow
 
 Each RSVP mutation will use the existing Firestore transaction for that mutation and update the related `sessions/{sessionId}/players/{playerId}` document when the session is pre-start. New session players receive the same initial stat fields used by the existing sync and add-player actions. Existing player records retain their IDs and statistics when reactivated or marked left.

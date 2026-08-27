@@ -11,6 +11,17 @@ export const SKILL_VALUE: Record<SkillLevel, number> = {
   advanced: 3,
 };
 
+export const SKILL_BALANCE_RATING: Record<SkillLevel, number> = {
+  unknown: 1000,
+  beginner: 900,
+  intermediate: 1000,
+  advanced: 1120,
+};
+
+export function balanceRatingFromSkill(skillLevel: SkillLevel): number {
+  return SKILL_BALANCE_RATING[skillLevel];
+}
+
 export const PLAYERS_PER_MATCH = 4;
 
 /** Default deterministic seed when no explicit seed is supplied (PRD §14.1). */
@@ -20,6 +31,9 @@ export interface EnginePlayer {
   playerId: string;
   displayName: string;
   skillLevel: SkillLevel;
+  /** Optional squad/session balance rating. Members use squadRating; guests can
+   * derive this from organiser-entered skill. Falls back to skillLevel. */
+  balanceRating?: number;
   /** Unused by buildRound/selectSitOuts (continuous scheduling has no round-gated
    *  late-joiners — a player is simply included the next time they're idle).
    *  Kept optional for backward-compat with existing test fixtures. */

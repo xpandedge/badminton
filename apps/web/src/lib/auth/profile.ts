@@ -1,6 +1,7 @@
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import type { Firestore } from "firebase/firestore";
 import type { User } from "firebase/auth";
+import type { PlayerGender } from "@picklebaddies/domain";
 
 /** The subset of Firebase User this module needs (keeps the pure helper testable). */
 export interface ProfileSource {
@@ -15,6 +16,7 @@ export interface UserProfileFields {
   email: string | null;
   emailLower: string | null;
   photoURL: string | null;
+  gender?: PlayerGender | null;
 }
 
 /** Pure: map a Firebase user to the stored profile fields (PRD §15.1, minus timestamps). */

@@ -7,6 +7,7 @@ export interface RsvpPlannerGroupPlayer {
   displayName?: string;
   skillLevel?: string;
   playerKind?: "regular" | "casual";
+  squadRating?: unknown;
 }
 
 export interface RsvpPlannerRecord {
@@ -34,6 +35,7 @@ export interface RsvpSessionPlayerPlanEntry {
   playerId: string;
   displayName: string;
   skillLevel: string;
+  squadRating?: number;
   participantType: "registered_user" | "guest";
   status: "active";
 }
@@ -53,6 +55,11 @@ function responseFromRecord(record: RsvpPlannerRecord | undefined, playerKind: "
 
 function displayName(value: unknown): string {
   return String(value ?? "Player").trim() || "Player";
+}
+
+function validSquadRating(value: unknown): number | undefined {
+  const rating = Number(value);
+  return Number.isFinite(rating) && rating > 0 ? rating : undefined;
 }
 
 export function planRsvpSessionPlayerUpdates(input: {
@@ -115,10 +122,12 @@ export function planRsvpSessionPlayerUpdates(input: {
     .map((entry) => {
       const groupPlayer = groupPlayerById.get(entry.id);
       const isGuest = (entry as SessionRsvpEntry & { participantType?: string }).participantType === "guest";
+      const squadRating = validSquadRating(groupPlayer?.squadRating);
       return {
         playerId: entry.id,
         displayName: entry.displayName,
         skillLevel: groupPlayer?.skillLevel ?? "unknown",
+        ...(squadRating === undefined ? {} : { squadRating }),
         participantType: isGuest ? "guest" as const : "registered_user" as const,
         status: "active" as const,
       };
@@ -148,6 +157,7 @@ export function applyRsvpSessionPlayerPlan(
       playerId: entry.playerId,
       displayName: entry.displayName,
       skillLevel: entry.skillLevel,
+      ...(entry.squadRating === undefined ? {} : { squadRating: entry.squadRating }),
       status: entry.status,
       participantType: entry.participantType,
       updatedAt: FieldValue.serverTimestamp(),

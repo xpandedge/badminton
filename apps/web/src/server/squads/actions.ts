@@ -13,7 +13,9 @@ import {
   getSquadPurgeAfter,
   getTimestampMillis,
   isSquadArchived,
+  parsePlayerGender,
   type GroupRole,
+  type PlayerGender,
   type SquadPlayerKind,
 } from "@picklebaddies/domain";
 import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
@@ -315,6 +317,8 @@ export async function addMemberToSquad(
   const displayName =
     targetUser.displayName?.trim() ||
     "Player";
+  const userProfileSnap = await db.doc(`users/${targetUser.uid}`).get();
+  const targetGender = parsePlayerGender(userProfileSnap.data()?.gender);
 
   const playerRef = db.doc(`groups/${squadId}/players/${targetUser.uid}`);
 
@@ -340,6 +344,7 @@ export async function addMemberToSquad(
         displayName,
         email: targetUser.email ?? null,
         skillLevel: "unknown",
+        ...(targetGender ? { gender: targetGender } : {}),
         isGuest: false,
         playerKind: "regular",
         createdAt: FieldValue.serverTimestamp(),
@@ -358,6 +363,7 @@ export async function addMemberToSquad(
 export interface AddGuestPlayerInput {
   squadId: string;
   displayName: string;
+  gender: PlayerGender;
   skillLevel?: string;
 }
 
@@ -372,6 +378,8 @@ export async function addGuestPlayerToSquad(
   if (!displayName || displayName.trim().length < 1) {
     return err("INVALID_ARGUMENT", "Player name is required");
   }
+  const parsedGender = parsePlayerGender(input.gender);
+  if (!parsedGender) return err("INVALID_ARGUMENT", "Choose Male, Female, or Non-binary.");
 
   const db = getAdminDb();
 
@@ -392,6 +400,7 @@ export async function addGuestPlayerToSquad(
   await playerRef.set({
     userId: null,
     displayName: displayName.trim(),
+    gender: parsedGender,
     email: null,
     skillLevel,
     isGuest: true,
@@ -476,7 +485,7 @@ async function addUserToSquad(
   t: FirebaseFirestore.Transaction,
   db: FirebaseFirestore.Firestore,
   squadId: string,
-  user: { uid: string; displayName?: string | null; email?: string | null },
+  user: { uid: string; displayName?: string | null; email?: string | null; gender?: PlayerGender | null },
   playerKind: SquadPlayerKind = "regular",
 ): Promise<void> {
   const displayName = user.displayName?.trim() || "Player";
@@ -486,6 +495,7 @@ async function addUserToSquad(
   }, { merge: true });
   t.set(db.doc(`groups/${squadId}/players/${user.uid}`), {
     userId: user.uid, displayName, email: user.email ?? null,
+    ...(user.gender ? { gender: user.gender } : {}),
     skillLevel: "unknown", isGuest: false,
     playerKind,
     createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
@@ -521,9 +531,18 @@ export async function joinSquadByCode(code: string): Promise<ActionResult<{ squa
   const memberSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   if (memberSnap.exists) return ok({ squadId, name }); // already a member — idempotent
 
-  const record = await auth.getUser(session.uid).catch(() => null);
+  const [record, profileSnap] = await Promise.all([
+    auth.getUser(session.uid).catch(() => null),
+    db.doc(`users/${session.uid}`).get(),
+  ]);
+  const gender = parsePlayerGender(profileSnap.data()?.gender);
   await db.runTransaction(async (t) => {
-    await addUserToSquad(t, db, squadId, { uid: session.uid, displayName: record?.displayName, email: record?.email });
+    await addUserToSquad(t, db, squadId, {
+      uid: session.uid,
+      displayName: record?.displayName,
+      email: record?.email,
+      gender,
+    });
     // Clear any pending request now that they're in.
     t.delete(db.doc(`groups/${squadId}/joinRequests/${session.uid}`));
   });
@@ -596,13 +615,18 @@ export async function requestToJoinSquad(squadId: string): Promise<ActionResult<
   const memberSnap = await db.doc(`groups/${squadId}/members/${session.uid}`).get();
   if (memberSnap.exists) return ok({ status: "joined" }); // already in
 
-  const record = await auth.getUser(session.uid).catch(() => null);
+  const [record, profileSnap] = await Promise.all([
+    auth.getUser(session.uid).catch(() => null),
+    db.doc(`users/${session.uid}`).get(),
+  ]);
   const displayName = record?.displayName?.trim() || "Player";
+  const gender = parsePlayerGender(profileSnap.data()?.gender);
 
   await db.doc(`groups/${squadId}/joinRequests/${session.uid}`).set({
     userId: session.uid,
     displayName,
     email: record?.email ?? null,
+    ...(gender ? { gender } : {}),
     status: "pending",
     createdAt: FieldValue.serverTimestamp(),
   }, { merge: true });
@@ -640,12 +664,21 @@ export async function approveJoinRequest(
   }
 
   const reqRef = db.doc(`groups/${squadId}/joinRequests/${requesterId}`);
-  const reqSnap = await reqRef.get();
+  const [reqSnap, profileSnap] = await Promise.all([
+    reqRef.get(),
+    db.doc(`users/${requesterId}`).get(),
+  ]);
   if (!reqSnap.exists) return err("NOT_FOUND", "Request not found");
   const reqData = reqSnap.data() as any;
+  const gender = parsePlayerGender(reqData.gender) ?? parsePlayerGender(profileSnap.data()?.gender);
 
   await db.runTransaction(async (t) => {
-    await addUserToSquad(t, db, squadId, { uid: requesterId, displayName: reqData.displayName, email: reqData.email }, playerKind);
+    await addUserToSquad(t, db, squadId, {
+      uid: requesterId,
+      displayName: reqData.displayName,
+      email: reqData.email,
+      gender,
+    }, playerKind);
     t.delete(reqRef);
   });
 

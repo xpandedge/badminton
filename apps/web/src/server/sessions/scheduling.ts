@@ -52,14 +52,23 @@ export function deserializeEngineState(data: FirestoreEngineState | undefined, p
   };
 }
 
-export function toEnginePlayers(players: Array<{ id?: string; playerId?: string; displayName?: string; skillLevel?: string; status?: string }>): EnginePlayer[] {
+function validBalanceRating(value: unknown): number | undefined {
+  const rating = Number(value);
+  return Number.isFinite(rating) && rating > 0 ? rating : undefined;
+}
+
+export function toEnginePlayers(players: Array<{ id?: string; playerId?: string; displayName?: string; skillLevel?: string; status?: string; squadRating?: unknown }>): EnginePlayer[] {
   return players
     .filter((p) => isSchedulable((p.status ?? "") as SessionPlayerStatus))
-    .map((p) => ({
-      playerId: (p.id || p.playerId)!,
-      displayName: p.displayName ?? "Player",
-      skillLevel: (p.skillLevel as EnginePlayer["skillLevel"]) || "unknown",
-    }));
+    .map((p) => {
+      const balanceRating = validBalanceRating(p.squadRating);
+      return {
+        playerId: (p.id || p.playerId)!,
+        displayName: p.displayName ?? "Player",
+        skillLevel: (p.skillLevel as EnginePlayer["skillLevel"]) || "unknown",
+        ...(balanceRating === undefined ? {} : { balanceRating }),
+      };
+    });
 }
 
 export function toEngineCourts(courts: Array<{ courtId?: string; id?: string; name: string; courtNumber: number; isActive?: boolean }>): EngineCourt[] {

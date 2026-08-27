@@ -77,6 +77,7 @@ function toPlannerGroupPlayers(
       displayName: data.displayName,
       skillLevel: typeof data.skillLevel === "string" ? data.skillLevel : undefined,
       playerKind: data.playerKind === "casual" ? "casual" : "regular",
+      squadRating: data.squadRating,
     };
   });
 }

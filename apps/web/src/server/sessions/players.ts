@@ -1,11 +1,23 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { canManageSessionPlayers, isSchedulable, isSkillLevel, type SessionPlayerStatus } from "@picklebaddies/domain";
+import {
+  canManageSessionPlayers,
+  isSchedulable,
+  isSkillLevel,
+  parsePlayerGender,
+  type PlayerGender,
+  type SessionPlayerStatus,
+} from "@picklebaddies/domain";
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 import { requireActiveSessionSquad } from "./actions";
+
+function validSquadRating(value: unknown): number | undefined {
+  const rating = Number(value);
+  return Number.isFinite(rating) && rating > 0 ? rating : undefined;
+}
 
 /**
  * Adds any group player (including the caller themselves) to a session.
@@ -62,6 +74,8 @@ export async function addGroupMemberToSession(
 
       const displayName = ((groupPlayer.displayName as string | undefined) ?? "").trim() || "Player";
       const skillLevel = (groupPlayer.skillLevel as string | undefined) ?? "unknown";
+      const squadRating = validSquadRating(groupPlayer.squadRating);
+      const gender = parsePlayerGender(groupPlayer.gender);
       const playerKind = groupPlayer.playerKind === "casual" ? "casual" : "regular";
       const rsvpResponse = playerKind === "casual" ? "casual_joined" : "in";
 
@@ -69,6 +83,8 @@ export async function addGroupMemberToSession(
         playerId: targetPlayerId,
         displayName,
         skillLevel,
+        ...(gender ? { gender } : {}),
+        ...(squadRating === undefined ? {} : { squadRating }),
         status: "active",
         participantType: "registered_user",
         joinedAt: FieldValue.serverTimestamp(),
@@ -238,6 +254,9 @@ export async function addLatePlayer(
       if (existing.exists) {
         throw Object.assign(new Error("Player is already in this session"), { code: "ALREADY_EXISTS" });
       }
+      const groupPlayerSnap = await t.get(db.doc(`groups/${session.groupId}/players/${playerId}`));
+      const squadRating = validSquadRating(groupPlayerSnap.data()?.squadRating);
+      const gender = parsePlayerGender(groupPlayerSnap.data()?.gender);
 
       // No round-gating needed: they simply join the idle pool the next time
       // any court frees up (continuous scheduling, see server/sessions/score.ts).
@@ -245,6 +264,8 @@ export async function addLatePlayer(
         playerId,
         displayName,
         skillLevel: resolvedSkill,
+        ...(gender ? { gender } : {}),
+        ...(squadRating === undefined ? {} : { squadRating }),
         status: "active",
         participantType: "registered_user",
         joinedAt: FieldValue.serverTimestamp(),
@@ -361,6 +382,7 @@ export async function markPlayerInjured(
 export interface AddSessionGuestInput {
   sessionId: string;
   displayName: string;
+  gender: PlayerGender;
   skillLevel?: string;
 }
 
@@ -374,6 +396,8 @@ export async function addGuestPlayerToSession(
   if (!sessionId || !displayName || displayName.trim().length < 1) {
     return err("INVALID_ARGUMENT", "sessionId and displayName are required");
   }
+  const parsedGender = parsePlayerGender(input.gender);
+  if (!parsedGender) return err("INVALID_ARGUMENT", "Choose Male, Female, or Non-binary.");
 
   const db = getAdminDb();
   const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
@@ -400,6 +424,7 @@ export async function addGuestPlayerToSession(
       t.set(db.doc(`sessions/${sessionId}/players/${playerId}`), {
         playerId,
         displayName: name,
+        gender: parsedGender,
         skillLevel,
         status: "active",
         participantType: "guest",
@@ -427,7 +452,7 @@ export async function addGuestPlayerToSession(
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "player/guest_added",
-        details: { playerId, displayName: name },
+        details: { playerId, displayName: name, gender: parsedGender },
         createdAt: FieldValue.serverTimestamp(),
       });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { bestTeamSplit, DEFAULT_WEIGHTS, type FoursomePlayer } from "./penalty.js";
 import { createInitialState, recordMatch } from "./state.js";
-import type { EnginePlayer } from "./types.js";
+import { balanceRatingFromSkill, type EnginePlayer } from "./types.js";
 
 const fp = (id: string, skillLevel: FoursomePlayer["skillLevel"] = "unknown"): FoursomePlayer => ({ playerId: id, skillLevel });
 
@@ -35,5 +35,36 @@ describe("penalty model + best team split", () => {
     ]);
 
     expect(split.penalty).toBe(0); // perfect balance
+  });
+
+  it("uses numeric balance ratings when present", () => {
+    const players: EnginePlayer[] = ["strongA", "strongB", "guestA", "guestB"].map((id) => ({
+      playerId: id,
+      displayName: id,
+      skillLevel: "intermediate",
+      availableFromRound: 1,
+    }));
+    const s = createInitialState(players);
+
+    const split = bestTeamSplit(s, [
+      { playerId: "strongA", skillLevel: "intermediate", balanceRating: 1200 },
+      { playerId: "strongB", skillLevel: "intermediate", balanceRating: 1180 },
+      { playerId: "guestA", skillLevel: "intermediate", balanceRating: 1000 },
+      { playerId: "guestB", skillLevel: "intermediate", balanceRating: 980 },
+    ]);
+
+    const strongTogether = (
+      split.teamA.includes("strongA") && split.teamA.includes("strongB")
+    ) || (
+      split.teamB.includes("strongA") && split.teamB.includes("strongB")
+    );
+    expect(strongTogether).toBe(false);
+  });
+
+  it("converts admin skill levels to temporary balance ratings", () => {
+    expect(balanceRatingFromSkill("beginner")).toBe(900);
+    expect(balanceRatingFromSkill("intermediate")).toBe(1000);
+    expect(balanceRatingFromSkill("advanced")).toBe(1120);
+    expect(balanceRatingFromSkill("unknown")).toBe(1000);
   });
 });

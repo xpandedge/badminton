@@ -6,7 +6,12 @@ import type { Session, SessionPlayer } from "@/lib/sessions/types";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
 import { watchGroupPlayers } from "@/lib/players/players";
-import { canManageSessionPlayers } from "@picklebaddies/domain";
+import {
+  canManageSessionPlayers,
+  PLAYER_GENDER_LABELS,
+  PLAYER_GENDERS,
+  type PlayerGender,
+} from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
 import { addGroupMemberToSession } from "@/server/sessions/players";
 import { addGuestPlayerToSession, rebalanceSession } from "@/lib/sessions/rebalance";
@@ -62,6 +67,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [isAddingAll, setIsAddingAll] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [guestName, setGuestName] = useState("");
+  const [guestGender, setGuestGender] = useState<PlayerGender | "">("");
   const [guestSkill, setGuestSkill] = useState("unknown");
   const [isAddingGuest, setIsAddingGuest] = useState(false);
   const [guestError, setGuestError] = useState<string | null>(null);
@@ -169,15 +175,21 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
 
   const handleAddGuest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!guestName.trim() || isAddingGuest || !canManage) return;
+    if (!guestName.trim() || !guestGender || isAddingGuest || !canManage) return;
     setIsAddingGuest(true);
     setGuestError(null);
     try {
-      const result = await addGuestPlayerToSession({ sessionId, displayName: guestName, skillLevel: guestSkill });
+      const result = await addGuestPlayerToSession({
+        sessionId,
+        displayName: guestName,
+        gender: guestGender,
+        skillLevel: guestSkill,
+      });
       if (result.data.rebalanceRecommended) {
         await rebalanceSession({ sessionId, trigger: "player_added" });
       }
       setGuestName("");
+      setGuestGender("");
       setGuestSkill("unknown");
     } catch (error: any) {
       setGuestError(error?.message ?? "Could not add guest. Try again.");
@@ -1266,6 +1278,19 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   />
                   <select
                     className="pb-input"
+                    value={guestGender}
+                    onChange={(e) => setGuestGender(e.target.value as PlayerGender | "")}
+                    style={{ height: 44, borderRadius: "var(--r-md)" }}
+                    aria-label="Guest gender"
+                    required
+                  >
+                    <option value="" disabled>Gender</option>
+                    {PLAYER_GENDERS.map((option) => (
+                      <option key={option} value={option}>{PLAYER_GENDER_LABELS[option]}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="pb-input"
                     value={guestSkill}
                     onChange={(e) => setGuestSkill(e.target.value)}
                     style={{ height: 44, borderRadius: "var(--r-md)" }}
@@ -1279,11 +1304,11 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   <button
                     type="submit"
                     data-testid="session-detail-guest-add-btn"
-                    disabled={!guestName.trim() || isAddingGuest}
+                    disabled={!guestName.trim() || !guestGender || isAddingGuest}
                     style={{
                       minHeight: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)",
                       background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900,
-                      opacity: guestName.trim() && !isAddingGuest ? 1 : 0.5, cursor: isAddingGuest ? "wait" : "pointer", whiteSpace: "nowrap",
+                      opacity: guestName.trim() && guestGender && !isAddingGuest ? 1 : 0.5, cursor: isAddingGuest ? "wait" : "pointer", whiteSpace: "nowrap",
                     }}
                   >
                     {isAddingGuest ? "Adding..." : "Add guest"}

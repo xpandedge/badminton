@@ -47,9 +47,9 @@ export default function PrivacyPage() {
         <h2>Information we collect</h2>
         <p>We collect the information needed to create accounts, organise groups and run racquet-sport sessions.</p>
         <ul>
-          <li><strong>Account information:</strong> name, email address, profile details, authentication identifier and account status.</li>
+          <li><strong>Account information:</strong> name, email address, gender, profile details, authentication identifier and account status.</li>
           <li><strong>Group information:</strong> squad membership, invitations, join requests and Owner, Admin or Member roles.</li>
-          <li><strong>Player information:</strong> display name, skill level, availability, RSVP and attendance status. Organisers may add name-only guests.</li>
+          <li><strong>Player information:</strong> display name, gender, skill level, availability, RSVP and attendance status. Organisers may add guest players.</li>
           <li><strong>Play information:</strong> match assignments, partners, opponents, sit-outs, scores, results, statistics and leaderboard positions.</li>
           <li><strong>Session information:</strong> sport, venue, courts, dates, duration, settings and organiser actions.</li>
           <li><strong>Technical information:</strong> device and browser information, IP address, authentication/session data, diagnostics, security events and product usage.</li>
@@ -80,6 +80,7 @@ export default function PrivacyPage() {
           <li>generate court assignments, rotations and future games</li>
           <li>record scores, calculate results and display leaderboards</li>
           <li>keep public player boards and score links updated</li>
+          <li>support mixed games and balanced session formats as DuoRally adds those options</li>
           <li>provide support, investigate problems and prevent misuse</li>
           <li>secure, maintain and improve DuoRally</li>
           <li>produce aggregated product insights that do not reasonably identify an individual</li>

@@ -25,4 +25,14 @@ describe("buildUserProfile", () => {
     });
     expect(profile).toEqual({ displayName: "", displayNameLower: "", email: null, emailLower: null, photoURL: null });
   });
+
+  it("does not invent a gender for a new Firebase user", () => {
+    const profile = buildUserProfile({
+      displayName: "Sam Rally",
+      email: "sam@example.com",
+      photoURL: null,
+    });
+
+    expect("gender" in profile).toBe(false);
+  });
 });

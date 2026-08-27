@@ -8,7 +8,16 @@ import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
 import { useAuth } from "@/lib/auth/useAuth";
-import { canCorrectCompletedScore, canCreateSession, canEnterScore, canGenerateSchedule, canManageSessionPlayers } from "@picklebaddies/domain";
+import {
+  canCorrectCompletedScore,
+  canCreateSession,
+  canEnterScore,
+  canGenerateSchedule,
+  canManageSessionPlayers,
+  PLAYER_GENDER_LABELS,
+  PLAYER_GENDERS,
+  type PlayerGender,
+} from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore } from "@/lib/sessions/scoring";
@@ -85,6 +94,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [isSelfJoining, setIsSelfJoining] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
+  const [sessionGuestGender, setSessionGuestGender] = useState<PlayerGender | "">("");
   const [sessionGuestSkill, setSessionGuestSkill] = useState("unknown");
   const [isAddingSessionGuest, setIsAddingSessionGuest] = useState(false);
 
@@ -349,13 +359,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   const handleAddSessionGuest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionGuestName.trim() || isAddingSessionGuest) return;
+    if (!sessionGuestName.trim() || !sessionGuestGender || isAddingSessionGuest) return;
     const addedGuestName = sessionGuestName.trim();
     setIsAddingSessionGuest(true);
     setActionError(null);
     try {
-      const res = await addGuestPlayerToSession({ sessionId, displayName: sessionGuestName, skillLevel: sessionGuestSkill });
+      const res = await addGuestPlayerToSession({
+        sessionId,
+        displayName: sessionGuestName,
+        gender: sessionGuestGender,
+        skillLevel: sessionGuestSkill,
+      });
       setSessionGuestName("");
+      setSessionGuestGender("");
       setSessionGuestSkill("unknown");
       if (!isRoundRobinSession && res.data.rebalanceRecommended) {
         const confirmed = await requestConfirmation({
@@ -1327,13 +1343,26 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                     required
                     style={{ height: 44, borderRadius: "var(--r-md)" }}
                   />
+                  <select
+                    className="pb-input"
+                    value={sessionGuestGender}
+                    onChange={(e) => setSessionGuestGender(e.target.value as PlayerGender | "")}
+                    style={{ height: 44, borderRadius: "var(--r-md)" }}
+                    aria-label="Guest gender"
+                    required
+                  >
+                    <option value="" disabled>Gender</option>
+                    {PLAYER_GENDERS.map((option) => (
+                      <option key={option} value={option}>{PLAYER_GENDER_LABELS[option]}</option>
+                    ))}
+                  </select>
                   <select className="pb-input" value={sessionGuestSkill} onChange={(e) => setSessionGuestSkill(e.target.value)} style={{ height: 44, borderRadius: "var(--r-md)" }}>
                     <option value="unknown">Skill: Unknown</option>
                     <option value="beginner">Beginner</option>
                     <option value="intermediate">Intermediate</option>
                     <option value="advanced">Advanced</option>
                   </select>
-                  <button type="submit" disabled={!sessionGuestName.trim() || isAddingSessionGuest} style={{ ...primaryActionStyle, height: 44, opacity: sessionGuestName.trim() && !isAddingSessionGuest ? 1 : 0.5 }}>
+                  <button type="submit" disabled={!sessionGuestName.trim() || !sessionGuestGender || isAddingSessionGuest} style={{ ...primaryActionStyle, height: 44, opacity: sessionGuestName.trim() && sessionGuestGender && !isAddingSessionGuest ? 1 : 0.5 }}>
                     {isAddingSessionGuest ? "Adding..." : "Add guest"}
                   </button>
                 </form>
@@ -1653,6 +1682,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               />
               <select
                 className="pb-input"
+                value={sessionGuestGender}
+                onChange={(e) => setSessionGuestGender(e.target.value as PlayerGender | "")}
+                style={{ height: 44, borderRadius: "var(--r-md)" }}
+                aria-label="Guest gender"
+                required
+              >
+                <option value="" disabled>Gender</option>
+                {PLAYER_GENDERS.map((option) => (
+                  <option key={option} value={option}>{PLAYER_GENDER_LABELS[option]}</option>
+                ))}
+              </select>
+              <select
+                className="pb-input"
                 value={sessionGuestSkill}
                 onChange={(e) => setSessionGuestSkill(e.target.value)}
                 style={{ height: 44, borderRadius: "var(--r-md)" }}
@@ -1665,11 +1707,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               <button
                 data-testid="session-guest-add-submit"
                 type="submit"
-                disabled={!sessionGuestName.trim() || isAddingSessionGuest}
+                disabled={!sessionGuestName.trim() || !sessionGuestGender || isAddingSessionGuest}
                 style={{
                   ...primaryActionStyle,
                   height: 44,
-                  opacity: sessionGuestName.trim() && !isAddingSessionGuest ? 1 : 0.5,
+                  opacity: sessionGuestName.trim() && sessionGuestGender && !isAddingSessionGuest ? 1 : 0.5,
                   whiteSpace: "nowrap",
                 }}
               >

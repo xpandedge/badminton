@@ -9,8 +9,10 @@ import {
   canManageSessionPlayers,
   getSportConfig,
   isSport,
+  parsePlayerGender,
   SPORT_OPTIONS,
   type GroupRole,
+  type PlayerGender,
   type Sport,
   type ScoringMode,
   type SessionFormat,
@@ -372,6 +374,11 @@ function timestampToMs(value: unknown): number {
     return (value as { toDate: () => Date }).toDate().getTime();
   }
   return new Date(value as string).getTime() || 0;
+}
+
+function validSquadRating(value: unknown): number | undefined {
+  const rating = Number(value);
+  return Number.isFinite(rating) && rating > 0 ? rating : undefined;
 }
 
 export async function getMySessionsAction(): Promise<ActionResult<{
@@ -743,6 +750,7 @@ export async function rsvpToSession(
     const displayName = (groupPlayer?.displayName as string | undefined)?.trim()
       || userRecord?.displayName?.trim()
       || "Player";
+    const gender = parsePlayerGender(groupPlayer?.gender);
 
     const result = await db.runTransaction(async (t) => {
       const rsvpRef = db.doc(`sessions/${sessionId}/rsvps/${user.uid}`);
@@ -776,10 +784,13 @@ export async function rsvpToSession(
 
       if (response === "in") {
         const existingPlayer = pSnap.data() ?? {};
+        const squadRating = validSquadRating(groupPlayer?.squadRating);
         const playerUpdate: Record<string, unknown> = {
           playerId: user.uid,
           displayName,
           skillLevel: existingPlayer.skillLevel ?? groupPlayer?.skillLevel ?? "unknown",
+          ...(gender ? { gender } : {}),
+          ...(squadRating === undefined ? {} : { squadRating }),
           status: "active",
           participantType: "registered_user",
           updatedAt: FieldValue.serverTimestamp(),
@@ -859,6 +870,8 @@ export async function rsvpToSession(
 type SyncableRsvpEntry = SessionRsvpEntry & {
   playerId: string;
   skillLevel: string;
+  gender?: PlayerGender;
+  squadRating?: number;
   participantType: "registered_user" | "guest";
 };
 
@@ -904,6 +917,8 @@ function buildAdminRsvpEntry(
   playerKind: SquadPlayerKind,
 ): AdminRsvpEntry {
   const player = playerDoc.data();
+  const squadRating = validSquadRating(player.squadRating);
+  const gender = parsePlayerGender(player.gender);
   return {
     id: rsvp?.id ?? playerDoc.id,
     rsvpId: rsvp?.id ?? playerDoc.id,
@@ -913,6 +928,8 @@ function buildAdminRsvpEntry(
     joinedAtMs: timestampToMs(rsvp?.createdAt ?? rsvp?.updatedAt),
     adminOverride: rsvp?.adminOverride,
     skillLevel: String(player.skillLevel ?? "unknown"),
+    ...(gender ? { gender } : {}),
+    ...(squadRating === undefined ? {} : { squadRating }),
     participantType: "registered_user",
     isPublic: false,
   };
@@ -1170,6 +1187,8 @@ export async function syncConfirmedRsvpsToSessionPlayers(
             : rsvp?.status === "not_going"
               ? playerKind === "regular" ? "away" : "removed"
               : undefined);
+        const squadRating = validSquadRating(player.squadRating);
+        const gender = parsePlayerGender(player.gender);
         const entry: SyncableRsvpEntry = {
           id: playerDoc.id,
           playerId: playerDoc.id,
@@ -1178,6 +1197,8 @@ export async function syncConfirmedRsvpsToSessionPlayers(
           joinedAtMs: timestampToMs(rsvp?.createdAt ?? rsvp?.updatedAt),
           adminOverride: rsvp?.adminOverride,
           skillLevel: String(player.skillLevel ?? "unknown"),
+          ...(gender ? { gender } : {}),
+          ...(squadRating === undefined ? {} : { squadRating }),
           participantType: "registered_user",
         };
         if (playerKind === "regular") regulars.push(entry);
@@ -1220,6 +1241,8 @@ export async function syncConfirmedRsvpsToSessionPlayers(
           playerId: entry.playerId,
           displayName: entry.displayName,
           skillLevel: entry.skillLevel || "unknown",
+          ...(entry.gender ? { gender: entry.gender } : {}),
+          ...(entry.squadRating === undefined ? {} : { squadRating: entry.squadRating }),
           status: "active",
           participantType: entry.participantType,
           updatedAt: FieldValue.serverTimestamp(),

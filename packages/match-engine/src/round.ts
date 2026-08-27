@@ -28,7 +28,7 @@ export function buildRound(
   for (let m = 0; m < courtsToUse.length; m++) {
     const four = foursomes[m] ?? pickLowestPenaltyFoursome(state, pool, byId, order);
     for (const id of four) pool.delete(id);
-    const split = bestTeamSplit(state, four.map((id) => ({ playerId: id, skillLevel: byId.get(id)!.skillLevel })));
+    const split = bestTeamSplit(state, four.map((id) => toFoursomePlayer(id, byId)));
     recordMatch(state, roundNumber, split.teamA, split.teamB);
     const court = courtsToUse[m]!;
     matches.push({ roundNumber, courtId: court.courtId, matchNumber: m + 1, teamA: split.teamA, teamB: split.teamB });
@@ -98,10 +98,7 @@ function pickLowestPenaltyPartition(
           const four = sortPlayerIds([anchor, rest[i]!, rest[j]!, rest[k]!], order) as [string, string, string, string];
           const fourSet = new Set(four);
           const nextRemaining = remaining.filter((id) => !fourSet.has(id));
-          const fourPenalty = foursomePenalty(state, four.map((id) => ({
-            playerId: id,
-            skillLevel: byId.get(id)!.skillLevel,
-          })));
+          const fourPenalty = foursomePenalty(state, four.map((id) => toFoursomePlayer(id, byId)));
           if (bestGroups && penalty + fourPenalty > bestPenalty) continue;
           visit(nextRemaining, [...groups, four], penalty + fourPenalty);
         }
@@ -145,7 +142,7 @@ function pickLowestPenaltyFoursome(
     || (order.get(a) ?? 0) - (order.get(b) ?? 0)
     || (a < b ? -1 : a > b ? 1 : 0))[0]!;
   const rest = ids.filter((id) => id !== anchor);
-  const fp = (id: string): FoursomePlayer => ({ playerId: id, skillLevel: byId.get(id)!.skillLevel });
+  const fp = (id: string): FoursomePlayer => toFoursomePlayer(id, byId);
 
   let best: { four: [string, string, string, string]; pen: number } | null = null;
   for (let i = 0; i < rest.length; i++)
@@ -156,4 +153,13 @@ function pickLowestPenaltyFoursome(
         if (!best || pen < best.pen) best = { four, pen };
       }
   return best!.four;
+}
+
+function toFoursomePlayer(id: string, byId: Map<string, EnginePlayer>): FoursomePlayer {
+  const player = byId.get(id)!;
+  return {
+    playerId: id,
+    skillLevel: player.skillLevel,
+    ...(player.balanceRating === undefined ? {} : { balanceRating: player.balanceRating }),
+  };
 }

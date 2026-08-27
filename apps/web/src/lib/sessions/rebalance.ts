@@ -1,5 +1,6 @@
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import type { PlayerGender } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { safeUnsubscribe } from "@/lib/realtime/watchWithFallback";
 import { rebalanceSession as serverRebalance } from "@/server/sessions/rebalance";
@@ -35,7 +36,7 @@ export async function addLatePlayer(data: { sessionId: string; playerId: string;
   return { data: result.data };
 }
 
-export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; skillLevel?: string }) {
+export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; gender: PlayerGender; skillLevel?: string }) {
   const result = await serverAddGuestSession(data);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };

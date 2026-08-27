@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { doc, onSnapshot } from "firebase/firestore";
 import { useAuth } from "@/lib/auth/useAuth";
 import { signOutUser } from "@/lib/auth/sign-in";
+import { getFirebaseServices } from "@/lib/firebase/client";
 import { SportPreferenceProvider, useSportPreference } from "@/lib/sport/SportPreferenceContext";
 import { SportPickerModal } from "@/components/SportPickerModal";
 import { Logo } from "@/components/Logo";
 import { PlayerNameDialog } from "@/components/PlayerNameDialog";
-import { SPORTS } from "@picklebaddies/domain";
+import { parsePlayerGender, SPORTS, type PlayerGender } from "@picklebaddies/domain";
 
 function SportBadge() {
   const { sport, isLoaded, openPicker } = useSportPreference();
@@ -189,11 +191,38 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const { user, loading, refreshUser } = useAuth();
   const router = useRouter();
   const [showPlayerNameDialog, setShowPlayerNameDialog] = useState(false);
+  const [profileGender, setProfileGender] = useState<PlayerGender | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const closePlayerNameDialog = useCallback(() => setShowPlayerNameDialog(false), []);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/sign-in");
   }, [loading, user, router]);
+
+  useEffect(() => {
+    if (!user) {
+      setProfileGender(null);
+      setProfileLoaded(false);
+      return;
+    }
+
+    setProfileGender(null);
+    setProfileLoaded(false);
+    const { db } = getFirebaseServices();
+    return onSnapshot(doc(db, "users", user.uid), (snapshot) => {
+      setProfileGender(parsePlayerGender(snapshot.data()?.gender));
+      setProfileLoaded(true);
+    }, () => {
+      setProfileGender(null);
+      setProfileLoaded(true);
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!loading && user && profileLoaded && !profileGender) {
+      setShowPlayerNameDialog(true);
+    }
+  }, [loading, profileGender, profileLoaded, user]);
 
   if (loading) {
     return (
@@ -292,8 +321,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           </button>
           <button
             type="button"
-            title="Edit your player name"
-            aria-label="Edit your player name"
+            title="Edit your player profile"
+            aria-label="Edit your player profile"
             onClick={() => setShowPlayerNameDialog(true)}
             style={{
             width: 32,
@@ -322,7 +351,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       <NavBar />
       <PlayerNameDialog
         currentName={user.displayName?.trim() ?? ""}
+        currentGender={profileGender}
         open={showPlayerNameDialog}
+        requireGender={!profileGender}
         onClose={closePlayerNameDialog}
         onSaved={refreshUser}
       />

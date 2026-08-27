@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
-import { isSport, SPORT_OPTIONS, type Sport } from "@picklebaddies/domain";
+import { isSport, parsePlayerGender, SPORT_OPTIONS, type PlayerGender, type Sport } from "@picklebaddies/domain";
 import { normalizePlayerDisplayName } from "@/lib/auth/display-name";
 import { getAdminAuth, getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
@@ -11,6 +11,11 @@ export interface UserSearchResult {
   uid: string;
   displayName: string;
   email: string | null;
+}
+
+export interface PlayerProfileInput {
+  displayName: string;
+  gender: PlayerGender;
 }
 
 export async function searchUsers(query: string): Promise<ActionResult<UserSearchResult[]>> {
@@ -89,7 +94,10 @@ function renameMatchTeam(team: unknown, playerId: string, displayName: string): 
   return { changed, players };
 }
 
-export async function updateMyDisplayName(displayNameInput: string): Promise<ActionResult<void>> {
+async function updateMyProfileFields(
+  displayNameInput: string,
+  genderInput?: unknown,
+): Promise<ActionResult<void>> {
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
 
@@ -101,6 +109,11 @@ export async function updateMyDisplayName(displayNameInput: string): Promise<Act
       "INVALID_ARGUMENT",
       validationError instanceof Error ? validationError.message : "Enter a valid player name",
     );
+  }
+
+  const gender = genderInput === undefined ? undefined : parsePlayerGender(genderInput);
+  if (genderInput !== undefined && !gender) {
+    return err("INVALID_ARGUMENT", "Choose Male, Female, or Non-binary.");
   }
 
   const db = getAdminDb();
@@ -141,6 +154,9 @@ export async function updateMyDisplayName(displayNameInput: string): Promise<Act
       if (snapshot.ref.parent.id === "users") {
         data.displayNameLower = displayName.toLowerCase();
       }
+      if (gender && (snapshot.ref.parent.id === "users" || snapshot.ref.parent.id === "players")) {
+        data.gender = gender;
+      }
       writer.set(snapshot.ref, data, { merge: true });
     }
 
@@ -160,7 +176,15 @@ export async function updateMyDisplayName(displayNameInput: string): Promise<Act
     await writer.close();
     return ok(undefined);
   } catch (updateError) {
-    console.error("player name update failed", updateError);
-    return err("INTERNAL", "Could not update your player name. Please try again.");
+    console.error("player profile update failed", updateError);
+    return err("INTERNAL", "Could not update your profile. Please try again.");
   }
+}
+
+export async function updateMyPlayerProfile(input: PlayerProfileInput): Promise<ActionResult<void>> {
+  return updateMyProfileFields(input.displayName, input.gender);
+}
+
+export async function updateMyDisplayName(displayNameInput: string): Promise<ActionResult<void>> {
+  return updateMyProfileFields(displayNameInput);
 }

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { planRsvpSessionPlayerUpdates } from "./rsvp-session-players";
 
-const regular = (id: string, name: string) => ({ id, displayName: name, playerKind: "regular" as const });
+const regular = (id: string, name: string, squadRating?: number) => ({
+  id,
+  displayName: name,
+  playerKind: "regular" as const,
+  ...(squadRating === undefined ? {} : { squadRating }),
+});
 
 describe("RSVP session-player planner", () => {
   const capacity = { totalPlayers: 3, casualConfirmedSlots: 1, waitlistEnabled: true };
@@ -63,6 +68,22 @@ describe("RSVP session-player planner", () => {
     });
 
     expect(plan.active[0]).toEqual(expect.objectContaining({ playerId: "regular-1", displayName: "Alex" }));
+  });
+
+  it("copies regular player squad ratings into session player updates", () => {
+    const plan = planRsvpSessionPlayerUpdates({
+      status: "draft",
+      capacity: { totalPlayers: 4, casualConfirmedSlots: 1, waitlistEnabled: true },
+      groupPlayers: [regular("regular-1", "Alex", 1185)],
+      rsvps: [{ id: "regular-1", response: "in" }],
+      sessionPlayers: [],
+      changedRsvp: { playerId: "regular-1", response: "in" },
+    });
+
+    expect(plan.active[0]).toEqual(expect.objectContaining({
+      playerId: "regular-1",
+      squadRating: 1185,
+    }));
   });
 
   it("does not undo an admin removal when another RSVP changes", () => {

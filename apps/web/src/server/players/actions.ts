@@ -1,6 +1,7 @@
 "use server";
 import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
+import { parsePlayerGender, type PlayerGender } from "@picklebaddies/domain";
 import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
@@ -31,13 +32,19 @@ export async function ensureGlobalPlayer(
 
   const db = getAdminDb();
   const ref = db.doc(`players/${user.uid}`);
+  const profileRef = db.doc(`users/${user.uid}`);
 
   await db.runTransaction(async (t) => {
-    const snap = await t.get(ref);
+    const [snap, profileSnap] = await Promise.all([
+      t.get(ref),
+      t.get(profileRef),
+    ]);
+    const gender = parsePlayerGender(profileSnap.data()?.gender);
     if (!snap.exists) {
       t.set(ref, {
         uid: user.uid,
         displayName: displayName.trim() || "Player",
+        ...(gender ? { gender } : {}),
         isGuest: false,
         totalGames: 0,
         totalWins: 0,
@@ -54,8 +61,16 @@ export async function ensureGlobalPlayer(
     } else {
       // Keep displayName in sync with auth profile
       const existing = snap.data()!;
+      const update: Record<string, unknown> = {};
       if (displayName && existing.displayName !== displayName) {
-        t.update(ref, { displayName, updatedAt: FieldValue.serverTimestamp() });
+        update.displayName = displayName;
+      }
+      if (gender && existing.gender !== gender) {
+        update.gender = gender;
+      }
+      if (Object.keys(update).length > 0) {
+        update.updatedAt = FieldValue.serverTimestamp();
+        t.update(ref, update);
       }
     }
   });
@@ -66,10 +81,13 @@ export async function ensureGlobalPlayer(
 /** Create a durable guest player doc. Returns the playerId to use in sessions. */
 export async function createGuestPlayer(
   displayName: string,
+  gender: PlayerGender,
 ): Promise<ActionResult<{ playerId: string }>> {
   if (!displayName || displayName.trim().length < 1) {
     return err("INVALID_ARGUMENT", "displayName is required");
   }
+  const parsedGender = parsePlayerGender(gender);
+  if (!parsedGender) return err("INVALID_ARGUMENT", "Choose Male, Female, or Non-binary.");
 
   const db = getAdminDb();
   const ref = db.collection("players").doc();
@@ -79,6 +97,7 @@ export async function createGuestPlayer(
   await guestRef.set({
     uid: playerId,
     displayName: displayName.trim(),
+    gender: parsedGender,
     isGuest: true,
     totalGames: 0,
     totalWins: 0,

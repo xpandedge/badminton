@@ -1,4 +1,4 @@
-import { SKILL_VALUE, type SkillLevel } from "./types.js";
+import { balanceRatingFromSkill, type SkillLevel } from "./types.js";
 import { pairKey, type EngineState } from "./state.js";
 
 export interface Weights {
@@ -9,12 +9,22 @@ export const DEFAULT_WEIGHTS: Weights = {
   repeatPartner: 10, repeatOpponent: 4, recentPartner: 6, recentOpponent: 3, skillGap: 1,
 };
 
-export interface FoursomePlayer { playerId: string; skillLevel: SkillLevel; }
+export interface FoursomePlayer { playerId: string; skillLevel: SkillLevel; balanceRating?: number; }
 export type TeamSplit = { teamA: [string, string]; teamB: [string, string]; penalty: number };
 
 const splits: ReadonlyArray<[number, number, number, number]> = [
   [0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2], // 3 distinct doubles pairings of 4 players
 ];
+
+function playerBalanceRating(player: FoursomePlayer): number {
+  return Number.isFinite(player.balanceRating) && player.balanceRating! > 0
+    ? player.balanceRating!
+    : balanceRatingFromSkill(player.skillLevel);
+}
+
+function teamStrength(a: FoursomePlayer, b: FoursomePlayer): number {
+  return playerBalanceRating(a) + playerBalanceRating(b);
+}
 
 /** Penalty of a specific team split given history (PRD §14.6 soft terms). */
 function splitPenalty(s: EngineState, p: FoursomePlayer[], idx: [number, number, number, number], w: Weights): number {
@@ -28,9 +38,9 @@ function splitPenalty(s: EngineState, p: FoursomePlayer[], idx: [number, number,
     pen += w.repeatOpponent * (s.opponentCount.get(pairKey(a.playerId, b.playerId)) ?? 0);
     if (s.lastOpponents.get(a.playerId)?.has(b.playerId)) pen += w.recentOpponent;
   }
-  const teamA = SKILL_VALUE[a1.skillLevel] + SKILL_VALUE[a2.skillLevel];
-  const teamB = SKILL_VALUE[b1.skillLevel] + SKILL_VALUE[b2.skillLevel];
-  pen += w.skillGap * Math.abs(teamA - teamB);
+  const teamA = teamStrength(a1, a2);
+  const teamB = teamStrength(b1, b2);
+  pen += w.skillGap * (Math.abs(teamA - teamB) / 100);
   return pen;
 }
 

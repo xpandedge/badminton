@@ -182,6 +182,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const isCompleted = session.status === "completed";
   const isRoundRobinSession = session.sessionFormat === "fixed_pair_round_robin";
   const canManageLive = canManageSessionPlayers(role);
+  const canEditPrestartRoster = canManageLive && (session.status === "draft" || session.status === "scheduled");
   const canScore = canEnterScore(role);
   const canControlSession = canCreateSession(role);
   const canGenerate = canGenerateSchedule(role);
@@ -1098,7 +1099,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 <h3 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "0.25rem" }}>
                   Get players on court
                 </h3>
-                <p style={{ color: "var(--text-2)", fontSize: "0.875rem" }}>Build tonight&apos;s lineup, then start when at least four players are ready.</p>
+                <p style={{ color: "var(--text-2)", fontSize: "0.875rem" }}>Build the lineup, then start when at least four players are ready.</p>
               </div>
 
               <div style={{ paddingBottom: "1rem", borderBottom: "1px solid var(--border)" }}>
@@ -1107,8 +1108,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 </span>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginTop: "0.625rem" }}>
                   {activePlayers.map((player) => (
-                    <span key={player.id} style={{ padding: "0.45rem 0.7rem", borderRadius: "var(--r-pill)", background: "var(--surface-sunken)", border: "1px solid var(--border)", fontWeight: 800, fontSize: "0.8125rem" }}>
+                    <span key={player.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", padding: "0.45rem 0.55rem 0.45rem 0.7rem", borderRadius: "var(--r-pill)", background: "var(--surface-sunken)", border: "1px solid var(--border)", fontWeight: 800, fontSize: "0.8125rem" }}>
                       {player.displayName}
+                      {canEditPrestartRoster && (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${player.displayName} from this session`}
+                          title="Remove from session"
+                          onClick={() => handlePlayerStatus(player.id, "removed")}
+                          style={{ width: 24, height: 24, display: "inline-grid", placeItems: "center", padding: 0, border: 0, borderRadius: "50%", background: "transparent", color: "var(--danger)", fontSize: "1.1rem", lineHeight: 1, cursor: "pointer" }}
+                        >
+                          &times;
+                        </button>
+                      )}
                     </span>
                   ))}
                   {activePlayers.length === 0 && <span style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>No players added yet.</span>}

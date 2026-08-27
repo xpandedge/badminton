@@ -12,6 +12,13 @@ import {
 import { getAdminDb } from "@/server/firebase/admin";
 import { ok, err, type ActionResult } from "@/server/result";
 import { requireActiveSessionSquad } from "./actions";
+import {
+  applyRsvpSessionPlayerPlan,
+  planRsvpSessionPlayerUpdates,
+  type RsvpPlannerGroupPlayer,
+  type RsvpPlannerRecord,
+  type RsvpPlannerSessionPlayer,
+} from "./rsvp-session-players";
 
 export interface PublicRsvpRoster {
   sessionId: string;
@@ -57,6 +64,52 @@ function formatStartsAt(value: unknown): string {
 function publicRsvpDocId(normalizedName: string): string {
   const hash = createHash("sha1").update(normalizedName).digest("hex").slice(0, 20);
   return `public_${hash}`;
+}
+
+function toPlannerGroupPlayers(
+  snapshot: FirebaseFirestore.QuerySnapshot,
+): RsvpPlannerGroupPlayer[] {
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      userId: typeof data.userId === "string" ? data.userId : undefined,
+      displayName: data.displayName,
+      skillLevel: typeof data.skillLevel === "string" ? data.skillLevel : undefined,
+      playerKind: data.playerKind === "casual" ? "casual" : "regular",
+    };
+  });
+}
+
+function toPlannerRsvps(snapshot: FirebaseFirestore.QuerySnapshot): RsvpPlannerRecord[] {
+  return snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      response: data.response as RsvpResponse | undefined,
+      status: data.status,
+      participantType: data.participantType,
+      displayName: data.displayName,
+      adminOverride: data.adminOverride,
+      createdAtMs: getTimestampMs(data.createdAt),
+      updatedAtMs: getTimestampMs(data.updatedAt),
+    };
+  });
+}
+
+function toPlannerSessionPlayers(
+  snapshot: FirebaseFirestore.QuerySnapshot,
+): RsvpPlannerSessionPlayer[] {
+  return snapshot.docs.map((doc) => ({ id: doc.id, status: doc.data().status }));
+}
+
+function sessionRsvpCapacity(session: FirebaseFirestore.DocumentData) {
+  const capacity = session.rsvpCapacity ?? {};
+  return {
+    totalPlayers: Number(capacity.totalPlayers ?? 11),
+    casualConfirmedSlots: Number(capacity.casualConfirmedSlots ?? 3),
+    waitlistEnabled: capacity.waitlistEnabled !== false,
+  };
 }
 
 async function findSessionByRsvpCode(rsvpCode: string) {
@@ -169,18 +222,26 @@ async function updateKnownPlayerRsvp(
   if (!sessionDoc) return err("NOT_FOUND", "This RSVP link is not available");
 
   const db = getAdminDb();
-  const session = sessionDoc.data();
   const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
   if (!activeSquad.ok) return activeSquad;
-  const playerRef = db.doc(`groups/${session.groupId}/players/${cleanPlayerId}`);
-  const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${cleanPlayerId}`);
 
   try {
     await db.runTransaction(async (t) => {
-      const [playerSnap, rsvpSnap] = await Promise.all([t.get(playerRef), t.get(rsvpRef)]);
+      const sessionRef = db.doc(`sessions/${sessionDoc.id}`);
+      const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${cleanPlayerId}`);
+      const [sessionSnap, playerSnap, rsvpSnap, groupPlayersSnap, rsvpsSnap, sessionPlayersSnap] = await Promise.all([
+        t.get(sessionRef),
+        t.get(db.doc(`groups/${sessionDoc.data().groupId}/players/${cleanPlayerId}`)),
+        t.get(rsvpRef),
+        t.get(db.collection(`groups/${sessionDoc.data().groupId}/players`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/rsvps`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/players`)),
+      ]);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
       if (!playerSnap.exists) {
         throw Object.assign(new Error("Choose a player from the list"), { code: "NOT_FOUND" });
       }
+      const session = sessionSnap.data()!;
       const player = playerSnap.data()!;
       const displayName = String(player.displayName ?? "Player").trim() || "Player";
       const playerKind = player.playerKind === "casual" ? "casual" : "regular";
@@ -197,6 +258,22 @@ async function updateKnownPlayerRsvp(
         createdAt: rsvpSnap.exists ? rsvpSnap.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
+
+      const plan = planRsvpSessionPlayerUpdates({
+        status: String(session.status ?? ""),
+        capacity: sessionRsvpCapacity(session),
+        groupPlayers: toPlannerGroupPlayers(groupPlayersSnap),
+        rsvps: toPlannerRsvps(rsvpsSnap),
+        sessionPlayers: toPlannerSessionPlayers(sessionPlayersSnap),
+        changedRsvp: { playerId: cleanPlayerId, response },
+      });
+      applyRsvpSessionPlayerPlan(
+        db,
+        t,
+        sessionDoc.id,
+        plan,
+        new Set(sessionPlayersSnap.docs.map((doc) => doc.id)),
+      );
     });
     return ok(undefined);
   } catch (error: any) {
@@ -222,21 +299,30 @@ export async function joinPublicCasualRsvp(rsvpCode: string, displayName: string
   if (!sessionDoc) return err("NOT_FOUND", "This RSVP link is not available");
 
   const db = getAdminDb();
-  const session = sessionDoc.data();
   const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
   if (!activeSquad.ok) return activeSquad;
-  const groupPlayersSnap = await db.collection(`groups/${session.groupId}/players`).get();
-  const exactKnownName = groupPlayersSnap.docs.some((doc) => {
-    const knownName = String(doc.data().displayName ?? "").trim();
-    return normalizeCasualName(knownName) === normalizedName;
-  });
-  if (exactKnownName) {
-    return err("ALREADY_EXISTS", "That name is already signed up. Use Find your name above.");
-  }
   const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${publicRsvpDocId(normalizedName)}`);
   try {
     await db.runTransaction(async (t) => {
-      const snap = await t.get(rsvpRef);
+      const sessionRef = db.doc(`sessions/${sessionDoc.id}`);
+      const sessionGroupId = String(sessionDoc.data().groupId ?? "");
+      const [sessionSnap, snap, groupPlayersSnap, rsvpsSnap, sessionPlayersSnap] = await Promise.all([
+        t.get(sessionRef),
+        t.get(rsvpRef),
+        t.get(db.collection(`groups/${sessionGroupId}/players`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/rsvps`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/players`)),
+      ]);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      const exactKnownName = groupPlayersSnap.docs.some((doc) => {
+        const knownName = String(doc.data().displayName ?? "").trim();
+        return normalizeCasualName(knownName) === normalizedName;
+      });
+      if (exactKnownName) {
+        throw Object.assign(new Error("That name is already signed up. Use Find your name above."), {
+          code: "ALREADY_EXISTS",
+        });
+      }
       if (snap.exists && snap.data()?.response !== "removed") {
         throw Object.assign(new Error("That name is already on this session list"), {
           code: "ALREADY_EXISTS",
@@ -251,6 +337,23 @@ export async function joinPublicCasualRsvp(rsvpCode: string, displayName: string
         createdAt: snap.exists ? snap.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true });
+
+      const session = sessionSnap.data()!;
+      const plan = planRsvpSessionPlayerUpdates({
+        status: String(session.status ?? ""),
+        capacity: sessionRsvpCapacity(session),
+        groupPlayers: toPlannerGroupPlayers(groupPlayersSnap),
+        rsvps: toPlannerRsvps(rsvpsSnap),
+        sessionPlayers: toPlannerSessionPlayers(sessionPlayersSnap),
+        changedRsvp: { playerId: rsvpRef.id, response: "casual_joined" },
+      });
+      applyRsvpSessionPlayerPlan(
+        db,
+        t,
+        sessionDoc.id,
+        plan,
+        new Set(sessionPlayersSnap.docs.map((doc) => doc.id)),
+      );
     });
     return ok(undefined);
   } catch (error: any) {
@@ -267,18 +370,54 @@ export async function removePublicCasualRsvp(rsvpCode: string, displayName: stri
   if (!sessionDoc) return err("NOT_FOUND", "This RSVP link is not available");
 
   const db = getAdminDb();
+  const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${publicRsvpDocId(normalizedName)}`);
   const activeSquad = await requireActiveSessionSquad(db, sessionDoc.id, "");
   if (!activeSquad.ok) return activeSquad;
-  const rsvpRef = db.doc(`sessions/${sessionDoc.id}/rsvps/${publicRsvpDocId(normalizedName)}`);
-  const snap = await rsvpRef.get();
-  if (!snap.exists || snap.data()?.participantType !== "public_casual") {
-    return err("NOT_FOUND", "That name is not on this public list");
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionDoc.id}`);
+      const sessionGroupId = String(sessionDoc.data().groupId ?? "");
+      const [sessionSnap, snap, groupPlayersSnap, rsvpsSnap, sessionPlayersSnap] = await Promise.all([
+        t.get(sessionRef),
+        t.get(rsvpRef),
+        t.get(db.collection(`groups/${sessionGroupId}/players`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/rsvps`)),
+        t.get(db.collection(`sessions/${sessionDoc.id}/players`)),
+      ]);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      if (!snap.exists || snap.data()?.participantType !== "public_casual") {
+        throw Object.assign(new Error("That name is not on this public list"), { code: "NOT_FOUND" });
+      }
+
+      t.set(rsvpRef, {
+        response: "removed",
+        status: "not_going",
+        removedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      const session = sessionSnap.data()!;
+      const plan = planRsvpSessionPlayerUpdates({
+        status: String(session.status ?? ""),
+        capacity: sessionRsvpCapacity(session),
+        groupPlayers: toPlannerGroupPlayers(groupPlayersSnap),
+        rsvps: toPlannerRsvps(rsvpsSnap),
+        sessionPlayers: toPlannerSessionPlayers(sessionPlayersSnap),
+        changedRsvp: { playerId: rsvpRef.id, response: "removed" },
+      });
+      applyRsvpSessionPlayerPlan(
+        db,
+        t,
+        sessionDoc.id,
+        plan,
+        new Set(sessionPlayersSnap.docs.map((doc) => doc.id)),
+      );
+    });
+    return ok(undefined);
+  } catch (error: any) {
+    if (error.code === "NOT_FOUND") return err("NOT_FOUND", error.message);
+    if (error.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", error.message);
+    throw error;
   }
-  await rsvpRef.set({
-    response: "removed",
-    status: "not_going",
-    removedAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  return ok(undefined);
 }

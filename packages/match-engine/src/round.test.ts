@@ -96,3 +96,64 @@ describe("buildRound", () => {
     expect(groupKeys).toEqual(["abch", "defg"]);
   });
 });
+
+describe("buildRound — who plays is chosen on pairing history, not just sit-out order", () => {
+  const six: EnginePlayer[] = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+    playerId: id, displayName: id, skillLevel: "unknown", availableFromRound: 1,
+  }));
+  const oneCourt: EngineCourt[] = [{ courtId: "c1", name: "Court 1", courtNumber: 1 }];
+
+  /** The continuous-refill shape: one freed court, an idle pool bigger than it needs. */
+  it("avoids re-running a foursome that has already played together", () => {
+    const state = createInitialState(six);
+    // c,d,e,f have met over and over; a and b are the fresh pair.
+    for (let round = 1; round <= 4; round++) {
+      recordMatch(state, round, ["c", "d"], ["e", "f"]);
+    }
+    // Level sit-out fairness so nothing but pairing history separates the six.
+    // Sorted by the old fairness ranking this sits a and b — the two players who
+    // have met nobody — and re-runs c,d,e,f for a fifth time.
+    for (const id of ["a", "b", "c", "d", "e", "f"]) {
+      state.gamesPlayed.set(id, 4);
+      state.sitOuts.set(id, 0);
+      state.playStreak.set(id, 0);
+    }
+
+    const { matches } = buildRound(state, six, oneCourt, 5);
+    expect(matches.length).toBe(1);
+    const onCourt = new Set([...matches[0]!.teamA, ...matches[0]!.teamB]);
+    // a and b have played nobody — they belong on court ahead of a fifth c/d/e/f.
+    expect(onCourt.has("a")).toBe(true);
+    expect(onCourt.has("b")).toBe(true);
+  });
+
+  it("still sits the players that sit-out fairness requires", () => {
+    const state = createInitialState(six);
+    // e and f have sat out twice already; they must play, whatever the history says.
+    state.sitOuts.set("e", 2);
+    state.sitOuts.set("f", 2);
+    for (const id of ["a", "b", "c", "d"]) state.sitOuts.set(id, 0);
+    for (let round = 1; round <= 3; round++) recordMatch(state, round, ["e", "f"], ["a", "b"]);
+
+    const { matches, sitOuts } = buildRound(state, six, oneCourt, 4);
+    expect(matches.length).toBe(1);
+    const sat = new Set(sitOuts.map((s) => s.playerId));
+    expect(sat.has("e")).toBe(false);
+    expect(sat.has("f")).toBe(false);
+    expect(sat.size).toBe(2);
+  });
+
+  it("never sits a player two rounds running when someone else can sit", () => {
+    const state = createInitialState(six);
+    for (const id of ["a", "b", "c", "d", "e", "f"]) state.gamesPlayed.set(id, 3);
+    state.lastSitOutRound.set("a", 4);
+    state.lastSitOutRound.set("b", 4);
+    state.sitOuts.set("a", 1);
+    state.sitOuts.set("b", 1);
+
+    const { sitOuts } = buildRound(state, six, oneCourt, 5);
+    const sat = sitOuts.map((s) => s.playerId);
+    expect(sat).not.toContain("a");
+    expect(sat).not.toContain("b");
+  });
+});

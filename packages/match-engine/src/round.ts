@@ -1,8 +1,8 @@
 import type { EngineCourt, EnginePlayer, GeneratedMatch, GeneratedSitOut, SitOutReason } from "./types.js";
 import { PLAYERS_PER_MATCH } from "./types.js";
-import { recordMatch, recordSitOut, type EngineState } from "./state.js";
-import { bestTeamSplit, foursomePenalty, type FoursomePlayer } from "./penalty.js";
-import { selectSitOuts } from "./sitouts.js";
+import { pairKey, recordMatch, recordSitOut, type EngineState } from "./state.js";
+import { bestTeamSplit, foursomePenalty, DEFAULT_WEIGHTS, type FoursomePlayer, type Weights } from "./penalty.js";
+import { planSitOuts, type SitOutResult } from "./sitouts.js";
 
 export interface RoundResult { matches: GeneratedMatch[]; sitOuts: GeneratedSitOut[]; }
 type Foursome = [string, string, string, string];
@@ -14,7 +14,7 @@ export function buildRound(
   order: Map<string, number> = new Map(),
 ): RoundResult {
   const byId = new Map(players.map((p) => [p.playerId, p] as const));
-  const { playing, sitting } = selectSitOuts(state, players.map((p) => p.playerId), courts.length, order, roundNumber);
+  const { playing, sitting } = chooseWhoPlays(state, players.map((p) => p.playerId), courts.length, order, roundNumber);
 
   const pool = new Set(playing);
   const matches: GeneratedMatch[] = [];
@@ -162,4 +162,99 @@ function toFoursomePlayer(id: string, byId: Map<string, EnginePlayer>): Foursome
     skillLevel: player.skillLevel,
     ...(player.balanceRating === undefined ? {} : { balanceRating: player.balanceRating }),
   };
+}
+
+
+/**
+ * How much history a group already shares — lower means fresher matchups.
+ * O(n²) over the group, cheap enough to score every candidate line-up.
+ */
+function groupFamiliarity(s: EngineState, ids: string[], w: Weights): number {
+  let total = 0;
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const key = pairKey(ids[i]!, ids[j]!);
+      total += w.repeatPartner * (s.partnerCount.get(key) ?? 0)
+             + w.repeatOpponent * (s.opponentCount.get(key) ?? 0);
+    }
+  }
+  return total;
+}
+
+/** Ceiling on how many line-ups we will score before falling back to seeded order. */
+const MAX_LINEUP_CANDIDATES = 3000;
+
+function chooseCount(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  let out = 1;
+  for (let i = 0; i < k; i++) {
+    out = (out * (n - i)) / (i + 1);
+    if (out > MAX_LINEUP_CANDIDATES) return Number.POSITIVE_INFINITY;
+  }
+  return Math.round(out);
+}
+
+/**
+ * Decide who plays this round.
+ *
+ * Sit-out fairness fixes most of this, but it routinely leaves a tie — in
+ * continuous play every idle player usually has the same sit-out count and
+ * games played. Settling that tie on the seeded order (what `selectSitOuts`
+ * does) hands the scheduler exactly one court's worth of players and no say in
+ * who meets whom, which is what let the same faces keep meeting. Break the tie
+ * on shared history instead: among the line-ups fairness permits, take the one
+ * whose players have met each other least.
+ */
+function chooseWhoPlays(
+  state: EngineState, available: string[], courtCount: number,
+  order: Map<string, number>, roundNumber: number,
+  w: Weights = DEFAULT_WEIGHTS,
+): SitOutResult {
+  const plan = planSitOuts(state, available, courtCount, roundNumber);
+  const byOrder = (ids: string[]) => sortPlayerIds(ids, order);
+
+  if (plan.remaining <= 0) {
+    const sitting = byOrder(plan.mustSit);
+    const sittingSet = new Set(sitting);
+    return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
+  }
+  if (plan.remaining >= plan.tied.length) {
+    const sitting = byOrder([...plan.mustSit, ...plan.tied]);
+    const sittingSet = new Set(sitting);
+    return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
+  }
+
+  const tied = byOrder(plan.tied);
+  // Too many ways to split the tie to score them all — keep the old, cheap rule.
+  if (chooseCount(tied.length, plan.remaining) === Number.POSITIVE_INFINITY) {
+    const sitting = byOrder([...plan.mustSit, ...tied.slice(0, plan.remaining)]);
+    const sittingSet = new Set(sitting);
+    return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
+  }
+
+  let bestSitters: string[] | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  const pick = (start: number, chosen: string[]) => {
+    if (chosen.length === plan.remaining) {
+      const sitters = [...plan.mustSit, ...chosen];
+      const sittingSet = new Set(sitters);
+      const lineup = available.filter((id) => !sittingSet.has(id));
+      // Both halves matter. The line-up is who meets now; the sitters are who
+      // meet next, because the sit-out shield sends them back on together and
+      // in continuous play only one court frees at a time.
+      const score = groupFamiliarity(state, lineup, w) + groupFamiliarity(state, sitters, w);
+      if (score < bestScore) {          // ties keep the first, i.e. seeded order
+        bestScore = score;
+        bestSitters = [...chosen];
+      }
+      return;
+    }
+    for (let i = start; i < tied.length; i++) pick(i + 1, [...chosen, tied[i]!]);
+  };
+  pick(0, []);
+
+  const sitting = byOrder([...plan.mustSit, ...(bestSitters ?? tied.slice(0, plan.remaining))]);
+  const sittingSet = new Set(sitting);
+  return { playing: available.filter((id) => !sittingSet.has(id)), sitting };
 }

@@ -1841,23 +1841,37 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                           </div>
                         </div>
 
-                        <a
-                          href={`/sessions/${s.id}/live`}
-                          onClick={(event) => {
-                            if (isArchived && s.status !== "completed" && s.status !== "cancelled") event.preventDefault();
-                          }}
-                          style={{
-                            height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
-                            background: "var(--ink-800)", color: "var(--volt-500)",
-                            fontWeight: 800, fontSize: "0.8125rem",
-                            textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
-                            opacity: isArchived && s.status !== "completed" && s.status !== "cancelled" ? 0.55 : 1,
-                          }}
-                        >
-                          {isArchived && s.status !== "completed" && s.status !== "cancelled"
-                            ? "Read-only"
-                            : s.status === "active" || s.status === "paused" ? "Run Session" : s.status === "completed" ? "View Results" : "Start Playing"}
-                        </a>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
+                          <a
+                            href={`/sessions/${s.id}`}
+                            style={{
+                              height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
+                              background: "var(--surface-sunken)", color: "var(--text-1)",
+                              border: "1px solid var(--border)",
+                              fontWeight: 800, fontSize: "0.8125rem",
+                              textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
+                            }}
+                          >
+                            Open
+                          </a>
+                          <a
+                            href={`/sessions/${s.id}/live`}
+                            onClick={(event) => {
+                              if (isArchived && s.status !== "completed" && s.status !== "cancelled") event.preventDefault();
+                            }}
+                            style={{
+                              height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
+                              background: "var(--ink-800)", color: "var(--volt-500)",
+                              fontWeight: 800, fontSize: "0.8125rem",
+                              textDecoration: "none", display: "inline-flex", alignItems: "center", flexShrink: 0,
+                              opacity: isArchived && s.status !== "completed" && s.status !== "cancelled" ? 0.55 : 1,
+                            }}
+                          >
+                            {isArchived && s.status !== "completed" && s.status !== "cancelled"
+                              ? "Read-only"
+                              : s.status === "active" || s.status === "paused" ? "Run Session" : s.status === "completed" ? "View Results" : "Start Playing"}
+                          </a>
+                        </div>
                       </div>
 
                       {/* RSVP Buttons for upcoming sessions */}

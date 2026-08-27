@@ -29,12 +29,16 @@ async function readSquadAccess(
   uid: string,
 ): Promise<ActionResult<SquadAccess>> {
   const groupRef = db.doc(`groups/${squadId}`);
-  const memberRef = db.doc(`groups/${squadId}/members/${uid}`);
-  const [groupSnap, memberSnap] = await Promise.all([groupRef.get(), memberRef.get()]);
+  const cleanUid = uid.trim();
+  const memberRef = cleanUid ? db.doc(`groups/${squadId}/members/${cleanUid}`) : null;
+  const [groupSnap, memberSnap] = await Promise.all([
+    groupRef.get(),
+    memberRef ? memberRef.get() : Promise.resolve(null),
+  ]);
 
   if (!groupSnap.exists) return err("NOT_FOUND", "Squad not found");
 
-  const memberData = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }) : null;
+  const memberData = memberSnap?.exists ? (memberSnap.data() as { role?: GroupRole }) : null;
   return ok({
     groupRef,
     group: groupSnap.data() as SquadGroupData,

@@ -174,4 +174,17 @@ describe("squad archive actions", () => {
       message: "This squad is archived and read-only",
     });
   });
+
+  it("allows public callers to read an active squad without a membership path", async () => {
+    const harness = makeHarness({ memberExists: false });
+
+    const result = await requireActiveSquad(harness.db, "squad-1", "");
+
+    expect(result).toEqual({
+      ok: true,
+      data: expect.objectContaining({ role: null }),
+    });
+    expect(harness.db.doc).toHaveBeenCalledTimes(1);
+    expect(harness.db.doc).toHaveBeenCalledWith("groups/squad-1");
+  });
 });

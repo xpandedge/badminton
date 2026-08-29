@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { bestTeamSplit, DEFAULT_WEIGHTS, type FoursomePlayer } from "./penalty.js";
-import { createInitialState, recordMatch } from "./state.js";
+import { bestTeamSplit, foursomePenalty, type FoursomePlayer } from "./penalty.js";
+import { createInitialState, pairKey, recordMatch } from "./state.js";
 import { balanceRatingFromSkill, type EnginePlayer } from "./types.js";
 
 const fp = (id: string, skillLevel: FoursomePlayer["skillLevel"] = "unknown"): FoursomePlayer => ({ playerId: id, skillLevel });
@@ -66,5 +66,50 @@ describe("penalty model + best team split", () => {
     expect(balanceRatingFromSkill("intermediate")).toBe(1000);
     expect(balanceRatingFromSkill("advanced")).toBe(1120);
     expect(balanceRatingFromSkill("unknown")).toBe(1000);
+  });
+});
+
+describe("social freshness penalty", () => {
+  const players: EnginePlayer[] = ["a", "b", "c", "d"].map((id) => ({
+    playerId: id,
+    displayName: id,
+    skillLevel: "unknown",
+  }));
+
+  it("avoids a repeated partner before using skill balance", () => {
+    const state = createInitialState(players);
+    state.partnerCount.set(pairKey("a", "b"), 2);
+    state.lastPartner.set("a", "b");
+    state.lastPartner.set("b", "a");
+
+    const split = bestTeamSplit(state, [fp("a"), fp("b"), fp("c"), fp("d")]);
+
+    expect(split.teamA.includes("a") && split.teamA.includes("b")).toBe(false);
+    expect(split.teamB.includes("a") && split.teamB.includes("b")).toBe(false);
+  });
+
+  it("prefers at least one opponent change over repeating both opponents", () => {
+    const state = createInitialState(players);
+    state.lastOpponents.set("a", new Set(["c", "d"]));
+    state.lastOpponents.set("b", new Set(["c", "d"]));
+    state.lastOpponents.set("c", new Set(["a", "b"]));
+    state.lastOpponents.set("d", new Set(["a", "b"]));
+    state.opponentCount.set(pairKey("a", "c"), 3);
+    state.opponentCount.set(pairKey("a", "d"), 3);
+    state.opponentCount.set(pairKey("b", "c"), 3);
+    state.opponentCount.set(pairKey("b", "d"), 3);
+
+    const repeatedOpponents = bestTeamSplit(state, [fp("a"), fp("b"), fp("c"), fp("d")]);
+
+    expect(repeatedOpponents.penalty).toBeGreaterThan(40);
+  });
+
+  it("charges a repeated foursome even when teams can be swapped", () => {
+    const state = createInitialState(players);
+    recordMatch(state, 1, ["a", "b"], ["c", "d"]);
+    recordMatch(state, 2, ["a", "c"], ["b", "d"]);
+    recordMatch(state, 3, ["a", "d"], ["b", "c"]);
+
+    expect(foursomePenalty(state, [fp("a"), fp("b"), fp("c"), fp("d")])).toBeGreaterThan(30);
   });
 });

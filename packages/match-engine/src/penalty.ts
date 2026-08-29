@@ -2,11 +2,22 @@ import { balanceRatingFromSkill, type SkillLevel } from "./types.js";
 import { pairKey, type EngineState } from "./state.js";
 
 export interface Weights {
-  repeatPartner: number; repeatOpponent: number; recentPartner: number;
-  recentOpponent: number; skillGap: number;
+  repeatPartner: number;
+  sameLastPartner: number;
+  repeatOpponent: number;
+  recentOpponent: number;
+  noOpponentChange: number;
+  repeatedFoursome: number;
+  skillGap: number;
 }
 export const DEFAULT_WEIGHTS: Weights = {
-  repeatPartner: 10, repeatOpponent: 4, recentPartner: 6, recentOpponent: 3, skillGap: 1,
+  repeatPartner: 50,
+  sameLastPartner: 80,
+  repeatOpponent: 10,
+  recentOpponent: 8,
+  noOpponentChange: 28,
+  repeatedFoursome: 36,
+  skillGap: 1,
 };
 
 export interface FoursomePlayer { playerId: string; skillLevel: SkillLevel; balanceRating?: number; }
@@ -26,18 +37,57 @@ function teamStrength(a: FoursomePlayer, b: FoursomePlayer): number {
   return playerBalanceRating(a) + playerBalanceRating(b);
 }
 
+function pairHistoryCount(s: EngineState, a: string, b: string): number {
+  const key = pairKey(a, b);
+  return (s.partnerCount.get(key) ?? 0) + (s.opponentCount.get(key) ?? 0);
+}
+
+function allPlayersHaveMet(s: EngineState, p: FoursomePlayer[]): boolean {
+  for (let i = 0; i < p.length; i++) {
+    for (let j = i + 1; j < p.length; j++) {
+      if (pairHistoryCount(s, p[i]!.playerId, p[j]!.playerId) === 0) return false;
+    }
+  }
+  return true;
+}
+
+function noOpponentChangePenalty(
+  s: EngineState,
+  player: FoursomePlayer,
+  opponents: [FoursomePlayer, FoursomePlayer],
+  w: Weights,
+): number {
+  const last = s.lastOpponents.get(player.playerId);
+  if (!last || last.size === 0) return 0;
+  return opponents.every((opponent) => last.has(opponent.playerId)) ? w.noOpponentChange : 0;
+}
+
 /** Penalty of a specific team split given history (PRD §14.6 soft terms). */
 function splitPenalty(s: EngineState, p: FoursomePlayer[], idx: [number, number, number, number], w: Weights): number {
   const [a1, a2, b1, b2] = idx.map((i) => p[i]!) as [FoursomePlayer, FoursomePlayer, FoursomePlayer, FoursomePlayer];
   let pen = 0;
-  pen += w.repeatPartner * ((s.partnerCount.get(pairKey(a1.playerId, a2.playerId)) ?? 0)
-                          + (s.partnerCount.get(pairKey(b1.playerId, b2.playerId)) ?? 0));
-  if (s.lastPartner.get(a1.playerId) === a2.playerId) pen += w.recentPartner;
-  if (s.lastPartner.get(b1.playerId) === b2.playerId) pen += w.recentPartner;
-  for (const a of [a1, a2]) for (const b of [b1, b2]) {
-    pen += w.repeatOpponent * (s.opponentCount.get(pairKey(a.playerId, b.playerId)) ?? 0);
-    if (s.lastOpponents.get(a.playerId)?.has(b.playerId)) pen += w.recentOpponent;
+
+  const partnerPairs: Array<[FoursomePlayer, FoursomePlayer]> = [[a1, a2], [b1, b2]];
+  for (const [x, y] of partnerPairs) {
+    pen += w.repeatPartner * (s.partnerCount.get(pairKey(x.playerId, y.playerId)) ?? 0);
+    if (s.lastPartner.get(x.playerId) === y.playerId) pen += w.sameLastPartner;
+    if (s.lastPartner.get(y.playerId) === x.playerId) pen += w.sameLastPartner;
   }
+
+  for (const a of [a1, a2]) {
+    const opponents: [FoursomePlayer, FoursomePlayer] = [b1, b2];
+    pen += noOpponentChangePenalty(s, a, opponents, w);
+    for (const b of opponents) {
+      pen += w.repeatOpponent * (s.opponentCount.get(pairKey(a.playerId, b.playerId)) ?? 0);
+      if (s.lastOpponents.get(a.playerId)?.has(b.playerId)) pen += w.recentOpponent;
+    }
+  }
+  for (const b of [b1, b2]) {
+    pen += noOpponentChangePenalty(s, b, [a1, a2], w);
+  }
+
+  if (allPlayersHaveMet(s, p)) pen += w.repeatedFoursome;
+
   const teamA = teamStrength(a1, a2);
   const teamB = teamStrength(b1, b2);
   pen += w.skillGap * (Math.abs(teamA - teamB) / 100);

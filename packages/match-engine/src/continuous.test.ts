@@ -19,6 +19,25 @@ function courts(n: number): EngineCourt[] {
 const ids = (ps: EnginePlayer[]) => ps.map((p) => p.playerId);
 const byId = (ps: EnginePlayer[]) => new Map(ps.map((p) => [p.playerId, p] as const));
 
+function partnerKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function countPartnerRepeats(matches: Array<{ teamA: [string, string]; teamB: [string, string] }>): number {
+  const counts = new Map<string, number>();
+  for (const match of matches) {
+    for (const team of [match.teamA, match.teamB]) {
+      const key = partnerKey(team[0], team[1]);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return [...counts.values()].filter((count) => count > 1).reduce((sum, count) => sum + count - 1, 0);
+}
+
+function playersIn(match: { teamA: [string, string]; teamB: [string, string] }): [string, string, string, string] {
+  return [...match.teamA, ...match.teamB] as [string, string, string, string];
+}
+
 describe("continuous per-court scheduling", () => {
   it("joint seed of all courts sits out only the true overflow, once each", () => {
     // 14 players, 3 courts (12 slots) -> exactly 2 must sit at seed time.
@@ -117,5 +136,70 @@ describe("continuous per-court scheduling", () => {
 
     const counts = ids(all).map((id) => state.sitOuts.get(id) ?? 0);
     expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps partner repeats low during an ordinary 10-player two-court social night", () => {
+    const all = players(10);
+    const map = byId(all);
+    const cs = courts(2);
+    const state = createInitialState(all);
+    const order = seededOrder(ids(all), 11);
+    const played: Array<{ teamA: [string, string]; teamB: [string, string] }> = [];
+
+    let cycle = 1;
+    const seed = buildRound(state, all, cs, cycle, order);
+    for (const match of seed.matches) played.push({ teamA: match.teamA, teamB: match.teamB });
+
+    const onCourt: Record<string, [string, string, string, string]> = {};
+    for (const match of seed.matches) onCourt[match.courtId] = playersIn(match);
+    let waiting = seed.sitOuts.map((s) => s.playerId);
+
+    for (let i = 0; i < 16; i++) {
+      const court = cs[i % cs.length]!;
+      const idleIds = [...onCourt[court.courtId]!, ...waiting];
+      cycle += 1;
+      const next = buildRound(state, idleIds.map((id) => map.get(id)!), [court], cycle, order);
+      expect(next.matches.length).toBe(1);
+      for (const match of next.matches) played.push({ teamA: match.teamA, teamB: match.teamB });
+      onCourt[court.courtId] = playersIn(next.matches[0]!);
+      waiting = next.sitOuts.map((s) => s.playerId);
+      expect(waiting.length).toBe(2);
+    }
+
+    const sitCounts = ids(all).map((id) => state.sitOuts.get(id) ?? 0);
+    const gameCounts = ids(all).map((id) => state.gamesPlayed.get(id) ?? 0);
+    expect(Math.max(...sitCounts) - Math.min(...sitCounts)).toBeLessThanOrEqual(1);
+    expect(Math.max(...gameCounts) - Math.min(...gameCounts)).toBeLessThanOrEqual(1);
+    expect(countPartnerRepeats(played)).toBeLessThanOrEqual(played.length / 3);
+  });
+
+  it("keeps sit-outs bounded while mixing a 14-player three-court session", () => {
+    const all = players(14);
+    const map = byId(all);
+    const cs = courts(3);
+    const state = createInitialState(all);
+    const order = seededOrder(ids(all), 19);
+
+    let cycle = 1;
+    const seed = buildRound(state, all, cs, cycle, order);
+    const onCourt: Record<string, [string, string, string, string]> = {};
+    for (const match of seed.matches) onCourt[match.courtId] = playersIn(match);
+    let waiting = seed.sitOuts.map((s) => s.playerId);
+
+    for (let i = 0; i < 24; i++) {
+      const court = cs[i % cs.length]!;
+      const idleIds = [...onCourt[court.courtId]!, ...waiting];
+      cycle += 1;
+      const next = buildRound(state, idleIds.map((id) => map.get(id)!), [court], cycle, order);
+      expect(next.matches.length).toBe(1);
+      onCourt[court.courtId] = playersIn(next.matches[0]!);
+      waiting = next.sitOuts.map((s) => s.playerId);
+      expect(waiting.length).toBe(2);
+    }
+
+    const sitCounts = ids(all).map((id) => state.sitOuts.get(id) ?? 0);
+    const gameCounts = ids(all).map((id) => state.gamesPlayed.get(id) ?? 0);
+    expect(Math.max(...sitCounts) - Math.min(...sitCounts)).toBeLessThanOrEqual(1);
+    expect(Math.max(...gameCounts) - Math.min(...gameCounts)).toBeLessThanOrEqual(2);
   });
 });

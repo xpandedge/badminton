@@ -127,6 +127,45 @@ describe("buildRound — who plays is chosen on pairing history, not just sit-ou
     expect(onCourt.has("b")).toBe(true);
   });
 
+  it("breaks sit-out ties by avoiding a repeated partner", () => {
+    const state = createInitialState(six);
+
+    for (const id of ["a", "b", "c", "d", "e", "f"]) {
+      state.gamesPlayed.set(id, 4);
+      state.sitOuts.set(id, 0);
+      state.playStreak.set(id, 0);
+    }
+    recordMatch(state, 1, ["a", "b"], ["c", "d"]);
+    recordMatch(state, 2, ["a", "b"], ["c", "e"]);
+    recordMatch(state, 3, ["a", "b"], ["d", "e"]);
+
+    const result = buildRound(state, six, oneCourt, 4);
+    const match = result.matches[0]!;
+    const repeatsAB =
+      match.teamA.includes("a") && match.teamA.includes("b") ||
+      match.teamB.includes("a") && match.teamB.includes("b");
+
+    expect(repeatsAB).toBe(false);
+  });
+
+  it("prefers a lineup where at least one opponent changes", () => {
+    const state = createInitialState(six);
+
+    for (const id of ["a", "b", "c", "d", "e", "f"]) {
+      state.gamesPlayed.set(id, 5);
+      state.sitOuts.set(id, 0);
+      state.playStreak.set(id, 0);
+    }
+    recordMatch(state, 1, ["a", "b"], ["c", "d"]);
+    recordMatch(state, 2, ["a", "b"], ["c", "d"]);
+    recordMatch(state, 3, ["a", "e"], ["b", "f"]);
+
+    const result = buildRound(state, six, oneCourt, 4);
+    const onCourt = new Set([...result.matches[0]!.teamA, ...result.matches[0]!.teamB]);
+
+    expect(onCourt.has("e") || onCourt.has("f")).toBe(true);
+  });
+
   it("still sits the players that sit-out fairness requires", () => {
     const state = createInitialState(six);
     // e and f have sat out twice already; they must play, whatever the history says.
@@ -169,7 +208,7 @@ describe("buildRound — spending sit-out fairness only when it buys something",
     // e has faced everyone repeatedly; a,b,c,d and f are fresh with each other.
     // Strict fairness keeps e on (they are a sit-out ahead), which forces a
     // stale match however the other three seats are filled.
-    for (const other of ["a", "b", "c", "d"]) state.opponentCount.set(pairKey("e", other), 5);
+    for (const other of ["a", "b", "c", "d", "f"]) state.opponentCount.set(pairKey("e", other), 5);
     for (const id of ["a", "b", "c", "d"]) { state.sitOuts.set(id, 0); state.gamesPlayed.set(id, 5); }
     for (const id of ["e", "f"]) { state.sitOuts.set(id, 1); state.gamesPlayed.set(id, 5); }
 

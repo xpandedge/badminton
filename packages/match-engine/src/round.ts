@@ -14,7 +14,14 @@ export function buildRound(
   order: Map<string, number> = new Map(),
 ): RoundResult {
   const byId = new Map(players.map((p) => [p.playerId, p] as const));
-  const { playing, sitting } = chooseWhoPlays(state, players.map((p) => p.playerId), courts.length, order, roundNumber);
+  const { playing, sitting } = chooseWhoPlays(
+    state,
+    players.map((p) => p.playerId),
+    courts.length,
+    order,
+    roundNumber,
+    byId,
+  );
 
   const pool = new Set(playing);
   const matches: GeneratedMatch[] = [];
@@ -169,7 +176,11 @@ function toFoursomePlayer(id: string, byId: Map<string, EnginePlayer>): Foursome
  * How much history a group already shares — lower means fresher matchups.
  * O(n²) over the group, cheap enough to score every candidate line-up.
  */
-function groupFamiliarity(s: EngineState, ids: string[], w: Weights): number {
+function groupFamiliarity(s: EngineState, ids: string[], byId: Map<string, EnginePlayer>, w: Weights): number {
+  if (ids.length === PLAYERS_PER_MATCH) {
+    return foursomePenalty(s, ids.map((id) => toFoursomePlayer(id, byId)), w);
+  }
+
   let total = 0;
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
@@ -207,7 +218,7 @@ function chooseCount(n: number, k: number): number {
  */
 function chooseWhoPlays(
   state: EngineState, available: string[], courtCount: number,
-  order: Map<string, number>, roundNumber: number,
+  order: Map<string, number>, roundNumber: number, byId: Map<string, EnginePlayer>,
   w: Weights = DEFAULT_WEIGHTS,
 ): SitOutResult {
   const plan = planSitOuts(state, available, courtCount, roundNumber);
@@ -238,7 +249,7 @@ function chooseWhoPlays(
   const scoreSitters = (sitters: string[]) => {
     const sittingSet = new Set(sitters);
     const lineup = available.filter((id) => !sittingSet.has(id));
-    return groupFamiliarity(state, lineup, w) + groupFamiliarity(state, sitters, w);
+    return groupFamiliarity(state, lineup, byId, w) + groupFamiliarity(state, sitters, byId, w);
   };
 
   const search = (fixed: string[], from: string[], take: number) => {

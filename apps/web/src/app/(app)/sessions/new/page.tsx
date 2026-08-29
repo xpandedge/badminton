@@ -164,7 +164,7 @@ export default function NewSessionPage() {
             </div>
             <div style={{ fontSize: "0.8125rem", color: "rgba(246,248,244,0.55)", marginTop: "0.375rem" }}>
               {durationMinutes} min · {courtNames.length} court{courtNames.length !== 1 ? "s" : ""} · {sportLabel}
-              {sessionFormat === "fixed_pair_round_robin" ? " · round robin" : ""}
+              {sessionFormat === "fixed_pair_round_robin" ? " · round robin" : " · mixer"}
             </div>
           </div>
           <div style={{
@@ -374,7 +374,7 @@ export default function NewSessionPage() {
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Format</span>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
               {[
-                { value: "social_rotation", label: "Social session", hint: "Fair rotating games" },
+                { value: "social_rotation", label: "Social Doubles Mixer", hint: "Mix partners, share court time" },
                 { value: "fixed_pair_round_robin", label: "Round robin", hint: "Fixed teams, every matchup" },
               ].map((option) => (
                 <button

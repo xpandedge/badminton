@@ -516,6 +516,16 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const displayNameById = new Map(players.map((p) => [p.playerId, p.displayName]));
 
   const activePlayers = players.filter((p) => p.status === "active" || p.status === "checked_in");
+  const socialCourtCapacity = activeCourts.length * 4;
+  const isExactSocialCapacity =
+    !isRoundRobinSession &&
+    activeCourts.length > 0 &&
+    activePlayers.length === socialCourtCapacity;
+  const isNearSocialCapacity =
+    !isRoundRobinSession &&
+    activeCourts.length > 0 &&
+    activePlayers.length > 4 &&
+    Math.abs(activePlayers.length - socialCourtCapacity) <= 1;
   const otherPlayers = players.filter((p) => p.status !== "active" && p.status !== "checked_in");
   const sessionPlayerIds = new Set(
     players
@@ -654,7 +664,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const gamesSpread = activeGameCounts.length > 0 ? Math.max(...activeGameCounts) - Math.min(...activeGameCounts) : null;
 
   const sessionTone = statusTone(session.status);
-  const sessionFormatLabel = isRoundRobinSession ? "round robin" : "social rotation";
+  const sessionFormatLabel = isRoundRobinSession ? "round robin" : "Social Doubles Mixer";
   const primaryActionStyle: CSSProperties = {
     height: 44,
     padding: "0 0.875rem",
@@ -988,6 +998,22 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               );
             })}
           </div>
+
+          {canManageLive && (isExactSocialCapacity || isNearSocialCapacity) && (
+            <div style={{
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-lg)",
+              background: "var(--surface-sunken)",
+              padding: "0.75rem 0.875rem",
+              color: "var(--text-2)",
+              fontSize: "0.8125rem",
+              lineHeight: 1.45,
+            }}>
+              {isExactSocialCapacity
+                ? "Everyone will get maximum court time, but groups may repeat. Add a spare player or use fewer courts if you want more mixing."
+                : "This player-to-court mix is tight. DuoRally will still share court time fairly, with variety improving when a spare player or court gap appears."}
+            </div>
+          )}
         </div>
       </section>
 

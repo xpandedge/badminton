@@ -77,9 +77,10 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     (session.courts as Array<{ courtId: string; name: string }>).map((c) => [c.courtId, c.name]),
   );
 
-  const [playerSnap, matchSnap, squadPlayerSnap] = await Promise.all([
+  const [playerSnap, matchSnap, leaderboardSnap, squadPlayerSnap] = await Promise.all([
     db.collection(`sessions/${sessionId}/players`).get(),
     db.collection(`sessions/${sessionId}/matches`).get(),
+    db.collection(`sessions/${sessionId}/leaderboard`).get(),
     // Grades live on the squad player, not the session player (squad-rating.ts).
     session.groupId
       ? db.collection(`groups/${session.groupId}/players`).get()
@@ -92,31 +93,73 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     if (typeof grade === "string" && grade) gradeByPlayerId.set(doc.id, grade);
   }
 
-  const roster: BoardPlayer[] = [];
-  const leaderRows: Array<BoardLeaderRow & { sitOutCount: number }> = [];
+  const playerNameById = new Map<string, string>();
+  const sessionStatsByPlayerId = new Map<string, Record<string, unknown>>();
+  const leaderboardStatsByPlayerId = new Map<string, Record<string, unknown>>();
+  const rememberName = (playerId: string, value: unknown) => {
+    const displayName = cleanDisplayName(value);
+    if (!displayName) return;
+
+    const current = playerNameById.get(playerId);
+    if (!current || current === "Player") playerNameById.set(playerId, displayName);
+  };
+
+  const activePlayerIds: string[] = [];
   for (const doc of playerSnap.docs) {
     const p = doc.data();
+    sessionStatsByPlayerId.set(doc.id, p);
+    rememberName(doc.id, p.displayName);
     const status = (p.status as string) ?? "active";
     if (ACTIVE_STATUSES.has(status)) {
-      roster.push({ playerId: doc.id, displayName: p.displayName ?? "Player" });
-    }
-    const gamesPlayed = p.gamesPlayed ?? 0;
-    if (gamesPlayed > 0) {
-      const pointsFor = p.pointsFor ?? 0;
-      const pointsAgainst = p.pointsAgainst ?? 0;
-      leaderRows.push({
-        playerId: doc.id,
-        displayName: p.displayName ?? "Player",
-        grade: gradeByPlayerId.get(doc.id) ?? null,
-        wins: p.wins ?? 0,
-        losses: p.losses ?? 0,
-        gamesPlayed,
-        pointDifference: p.pointDifference ?? pointsFor - pointsAgainst,
-        sitOutCount: p.sitOutCount ?? 0,
-      });
+      activePlayerIds.push(doc.id);
     }
   }
-  roster.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  for (const doc of leaderboardSnap.docs) {
+    const row = doc.data();
+    leaderboardStatsByPlayerId.set(doc.id, row);
+    rememberName(doc.id, row.displayName);
+  }
+
+  for (const doc of matchSnap.docs) {
+    const m = doc.data();
+    for (const p of asBoardPlayers(m.teamA)) rememberName(p.playerId, p.displayName);
+    for (const p of asBoardPlayers(m.teamB)) rememberName(p.playerId, p.displayName);
+  }
+  const roster: BoardPlayer[] = activePlayerIds
+    .map((playerId) => ({
+      playerId,
+      displayName: displayNameFor(playerId, sessionStatsByPlayerId.get(playerId)?.displayName, playerNameById),
+    }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+  const leaderRows: Array<BoardLeaderRow & { sitOutCount: number }> = [];
+  const leaderIds = new Set([
+    ...leaderboardStatsByPlayerId.keys(),
+    ...sessionStatsByPlayerId.keys(),
+  ]);
+  for (const playerId of leaderIds) {
+    const leaderboardStats = leaderboardStatsByPlayerId.get(playerId);
+    const sessionStats = sessionStatsByPlayerId.get(playerId);
+    const stats = numberField(leaderboardStats, "gamesPlayed") > 0 ? leaderboardStats : sessionStats;
+    if (!stats) continue;
+
+    const gamesPlayed = numberField(stats, "gamesPlayed");
+    if (gamesPlayed <= 0) continue;
+
+    const pointsFor = numberField(stats, "pointsFor");
+    const pointsAgainst = numberField(stats, "pointsAgainst");
+    leaderRows.push({
+      playerId,
+      displayName: displayNameFor(playerId, stats.displayName, playerNameById),
+      grade: gradeByPlayerId.get(playerId) ?? null,
+      wins: numberField(stats, "wins"),
+      losses: numberField(stats, "losses"),
+      gamesPlayed,
+      pointDifference: typeof stats.pointDifference === "number" ? stats.pointDifference : pointsFor - pointsAgainst,
+      sitOutCount: numberField(stats, "sitOutCount"),
+    });
+  }
 
   const leaderboard = leaderRows
     .sort((a, b) => leaderboardCompare(a as LeaderboardRow, b as LeaderboardRow, scoringMode))
@@ -130,8 +173,8 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
       courtId: m.courtId,
       courtName: m.courtName ?? courtNameById.get(m.courtId) ?? m.courtId,
       status: m.status as string,
-      teamA: (m.teamA as BoardPlayer[]).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
-      teamB: (m.teamB as BoardPlayer[]).map((p) => ({ playerId: p.playerId, displayName: p.displayName })),
+      teamA: asBoardPlayers(m.teamA).map((p) => ({ playerId: p.playerId, displayName: displayNameFor(p.playerId, p.displayName, playerNameById) })),
+      teamB: asBoardPlayers(m.teamB).map((p) => ({ playerId: p.playerId, displayName: displayNameFor(p.playerId, p.displayName, playerNameById) })),
       winnerTeam: (m.winnerTeam as "A" | "B" | null) ?? null,
       teamAScore: typeof sp?.teamAScore === "number" ? sp.teamAScore : null,
       teamBScore: typeof sp?.teamBScore === "number" ? sp.teamBScore : null,
@@ -148,5 +191,34 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     roster,
     matches,
     leaderboard,
+  });
+}
+
+function cleanDisplayName(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const displayName = value.trim();
+  return displayName.length > 0 ? displayName : null;
+}
+
+function displayNameFor(playerId: string, preferred: unknown, playerNameById: Map<string, string>): string {
+  return cleanDisplayName(preferred) ?? playerNameById.get(playerId) ?? "Player";
+}
+
+function numberField(data: Record<string, unknown> | undefined, key: string): number {
+  const value = data?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function asBoardPlayers(value: unknown): BoardPlayer[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((player) => {
+    const playerId = typeof player?.playerId === "string" ? player.playerId : "";
+    if (!playerId) return [];
+
+    return [{
+      playerId,
+      displayName: cleanDisplayName(player?.displayName) ?? "Player",
+    }];
   });
 }

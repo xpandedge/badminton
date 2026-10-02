@@ -28,6 +28,7 @@ const PLAYER_STATUS_LABELS: Record<string, string> = {
 const SCORING_MODE_LABELS: Record<string, string> = {
   points:      "Full Score",
   winner_only: "Win / Loss",
+  no_scoring:  "No scoring",
 };
 
 export function formatSessionStatus(status: string): string {

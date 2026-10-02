@@ -76,4 +76,12 @@ describe("leaderboardCompare", () => {
     expect(leaderboardCompare(a, b, "points")).toBeGreaterThan(0);
     expect(leaderboardCompare(a, b, "winner_only")).toBeGreaterThan(0);
   });
+
+  it("no scoring mode ranks by games played only, then name", () => {
+    const frequent = { wins: 0, pointDifference: -20, gamesPlayed: 5, sitOutCount: 3, displayName: "Zoe" };
+    const winning = { wins: 4, pointDifference: 30, gamesPlayed: 4, sitOutCount: 0, displayName: "Amy" };
+    const tiedGamesA = { wins: 0, pointDifference: 0, gamesPlayed: 5, sitOutCount: 0, displayName: "Ari" };
+    expect(leaderboardCompare(frequent, winning, "no_scoring")).toBeLessThan(0);
+    expect(leaderboardCompare(frequent, tiedGamesA, "no_scoring")).toBeGreaterThan(0);
+  });
 });

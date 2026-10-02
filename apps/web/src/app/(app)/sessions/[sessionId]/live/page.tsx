@@ -20,7 +20,7 @@ import {
 } from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
 import { logEvent } from "@/lib/analytics/events";
-import { enterScore } from "@/lib/sessions/scoring";
+import { enterScore, finishGameWithoutScore } from "@/lib/sessions/scoring";
 import { QRCode } from "@/components/QRCode";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
@@ -486,6 +486,25 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     }
   };
 
+  const finishWithoutScore = async (matchId: string) => {
+    if (scoringMatchIdsRef.current.has(matchId)) return;
+    scoringMatchIdsRef.current.add(matchId);
+    setScoringMatchIds((current) => new Set(current).add(matchId));
+    setActionError(null);
+    try {
+      await finishGameWithoutScore(sessionId, matchId);
+    } catch (err: any) {
+      setActionError(err.message);
+    } finally {
+      scoringMatchIdsRef.current.delete(matchId);
+      setScoringMatchIds((current) => {
+        const next = new Set(current);
+        next.delete(matchId);
+        return next;
+      });
+    }
+  };
+
   const startScoreEdit = (match: any) => {
     if (!canCorrectCompletedScore(role, session!.status) || match.status !== "completed") return;
     const payload = match.scorePayload;
@@ -586,6 +605,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const gamesById = new Map<string, number>(leaderboard.map((r: any) => [r.playerId, r.gamesPlayed ?? 0]));
   const gamesFor = (id: string) => gamesById.get(id) ?? 0;
   const visibleLeaderboard = isRoundRobinSession ? teamLeaderboard : leaderboard;
+  const isNoScoringSession = session.scoringMode === "no_scoring";
 
   // Is the signed-in user already in this session as a player?
   const currentUserInSession = user
@@ -690,7 +710,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
     const isScoring = scoringMatchIds.has(m.id);
     const isEditing = editingScoreMatchIds.has(m.id);
-    const canEditScore = m.status === "completed" && canCorrectCompletedScore(role, session!.status);
+    const canEditScore = !isNoScoringSession && m.status === "completed" && canCorrectCompletedScore(role, session!.status);
     const inMatch = new Set<string>([
       ...m.teamA.map((p: any) => p.playerId),
       ...m.teamB.map((p: any) => p.playerId),
@@ -837,8 +857,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 }}
               >
                 <span className="pb-score-loader" aria-hidden="true" />
-                {isEditing ? "Saving correction..." : "Loading next game..."}
+                {isEditing ? "Saving correction..." : isNoScoringSession ? "Finishing game..." : "Loading next game..."}
               </div>
+            );
+          }
+          if (isNoScoringSession && !isEditing) {
+            return (
+              <button
+                data-testid="finish-game-no-score-btn"
+                disabled={isScoring}
+                onClick={() => finishWithoutScore(m.id)}
+                style={{ ...primaryActionStyle, width: "100%", cursor: isScoring ? "default" : primaryActionStyle.cursor, opacity: isScoring ? 0.65 : 1 }}
+              >
+                Finish game
+              </button>
             );
           }
           return (
@@ -942,7 +974,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {session.name}
               </h1>
               <p style={{ color: "rgba(246,248,244,0.72)", marginTop: "0.5rem", maxWidth: 760 }}>
-                Live console · {sessionFormatLabel} · {formatScoringMode(session.scoringMode)} scoring
+                Live console · {sessionFormatLabel} · {formatScoringMode(session.scoringMode)}
+                {session.scoringMode === "no_scoring" ? "" : " scoring"}
               </p>
             </div>
             <div style={{
@@ -1486,16 +1519,16 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           animation: "pb-rise 400ms 150ms var(--ease-out) both",
         }}>
           <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.875rem" }}>
-            {isRoundRobinSession ? "Team Leaderboard" : "Leaderboard"}
+            {isNoScoringSession ? "Games played" : isRoundRobinSession ? "Team Leaderboard" : "Leaderboard"}
           </h2>
           {visibleLeaderboard.length === 0 ? (
             <div style={{ border: "2px dashed var(--border)", borderRadius: "var(--r-xl)", padding: "1.5rem", color: "var(--text-2)", textAlign: "center" }}>
-              No scores yet.
+              {isNoScoringSession ? "No games finished yet." : "No scores yet."}
             </div>
           ) : (
             <div style={{ display: "grid", gap: "0.375rem" }}>
               {/* Leaderboard Header */}
-              <div className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
+              <div className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : isNoScoringSession ? "is-no-scoring" : "is-winner-only"}`} style={{
                 padding: "0.25rem 0.5rem",
                 fontFamily: "var(--font-mono)",
                 fontSize: "0.625rem",
@@ -1503,13 +1536,22 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 textTransform: "uppercase",
                 color: "var(--text-3)",
               }}>
-                <span>#</span>
-                <span>{isRoundRobinSession ? "Team" : "Player"}</span>
-                <span style={{ textAlign: "right" }}>G</span>
-                <span style={{ textAlign: "right" }}>W</span>
-                <span style={{ textAlign: "right" }}>L</span>
-                <span style={{ textAlign: "right" }}>WIN%</span>
-                {session.scoringMode === "points" && <span style={{ textAlign: "right" }}>PD</span>}
+                {isNoScoringSession ? (
+                  <>
+                    <span>{isRoundRobinSession ? "Team" : "Player"}</span>
+                    <span style={{ textAlign: "right" }}>Games played</span>
+                  </>
+                ) : (
+                  <>
+                    <span>#</span>
+                    <span>{isRoundRobinSession ? "Team" : "Player"}</span>
+                    <span style={{ textAlign: "right" }}>G</span>
+                    <span style={{ textAlign: "right" }}>W</span>
+                    <span style={{ textAlign: "right" }}>L</span>
+                    <span style={{ textAlign: "right" }}>WIN%</span>
+                    {session.scoringMode === "points" && <span style={{ textAlign: "right" }}>PD</span>}
+                  </>
+                )}
               </div>
 
               {visibleLeaderboard.map((row, idx) => {
@@ -1517,41 +1559,54 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 const wins = row.wins ?? 0;
                 const losses = row.losses ?? Math.max(0, totalGames - wins);
                 const winPct = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
-                const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                const medal = !isNoScoringSession && idx === 0 ? "🥇" : !isNoScoringSession && idx === 1 ? "🥈" : !isNoScoringSession && idx === 2 ? "🥉" : null;
                 const pd = row.pointDifference ?? 0;
                 const rowId = row.teamId ?? row.playerId;
                 const rowLabel = row.displayName ?? displayNameById.get(row.playerId) ?? rowId;
                 const playerNames = Array.isArray(row.playerNames) ? row.playerNames.join(" / ") : "";
 
                 return (
-                  <div key={rowId} className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : "is-winner-only"}`} style={{
+                  <div key={rowId} className={`pb-live-leaderboard-grid ${session.scoringMode === "points" ? "is-points" : isNoScoringSession ? "is-no-scoring" : "is-winner-only"}`} style={{
                     alignItems: "center",
                     padding: "0.5rem 0.5rem",
                     borderRadius: "var(--r-lg)",
-                    background: idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
+                    background: !isNoScoringSession && idx === 0 ? "rgba(198,241,53,0.18)" : "var(--surface-sunken)",
                   }}>
-                    <span style={{ fontWeight: 900, fontSize: medal ? "1rem" : "0.75rem", fontFamily: "var(--font-mono)" }}>
-                      {medal ?? (idx + 1)}
-                    </span>
-                    <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={playerNames || rowLabel}>
-                      {rowLabel}
-                    </span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--text-1)" }}>
-                      {totalGames}
-                    </span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--volt-600)" }}>
-                      {wins}
-                    </span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: "var(--text-3)" }}>
-                      {losses}
-                    </span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: winPct >= 50 ? "var(--volt-600)" : "var(--text-2)" }}>
-                      {winPct}%
-                    </span>
-                    {session.scoringMode === "points" && (
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: pd > 0 ? "var(--volt-600)" : pd < 0 ? "var(--danger)" : "var(--text-3)" }}>
-                        {pd > 0 ? `+${pd}` : pd}
-                      </span>
+                    {isNoScoringSession ? (
+                      <>
+                        <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={playerNames || rowLabel}>
+                          {rowLabel}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--text-1)" }}>
+                          {totalGames}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ fontWeight: 900, fontSize: medal ? "1rem" : "0.75rem", fontFamily: "var(--font-mono)" }}>
+                          {medal ?? (idx + 1)}
+                        </span>
+                        <span style={{ fontWeight: 800, fontSize: "0.8125rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={playerNames || rowLabel}>
+                          {rowLabel}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--text-1)" }}>
+                          {totalGames}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: "var(--volt-600)" }}>
+                          {wins}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: "var(--text-3)" }}>
+                          {losses}
+                        </span>
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", fontWeight: 800, textAlign: "right", color: winPct >= 50 ? "var(--volt-600)" : "var(--text-2)" }}>
+                          {winPct}%
+                        </span>
+                        {session.scoringMode === "points" && (
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", textAlign: "right", color: pd > 0 ? "var(--volt-600)" : pd < 0 ? "var(--danger)" : "var(--text-3)" }}>
+                            {pd > 0 ? `+${pd}` : pd}
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 );

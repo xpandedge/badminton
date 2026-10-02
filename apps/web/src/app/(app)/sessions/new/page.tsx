@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createSession } from "@/server/sessions/actions";
 import { getOrCreateDefaultSquad } from "@/server/squads/actions";
-import { SPORTS, getSportConfig, type Sport } from "@picklebaddies/domain";
+import { SPORTS, getSportConfig, type ScoringMode, type Sport } from "@picklebaddies/domain";
 import { watchUserGroups } from "@/lib/groups/groups";
 import { watchVenues, watchCourts } from "@/lib/groups/venues";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -29,7 +29,7 @@ export default function NewSessionPage() {
   const [sport, setSport] = useState<Sport>("pickleball");
   const [durationMinutes, setDurationMinutes] = useState(90);
   const [scheduledTime, setScheduledTime] = useState("");
-  const [scoringMode, setScoringMode] = useState<"winner_only" | "points">("points");
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("points");
   const [sessionFormat, setSessionFormat] = useState<"social_rotation" | "fixed_pair_round_robin">("social_rotation");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,7 +43,7 @@ export default function NewSessionPage() {
 
   // Pre-fill scoring mode from sport default
   useEffect(() => {
-    setScoringMode(sportConfig.defaultScoringMode as "winner_only" | "points");
+    setScoringMode(sportConfig.defaultScoringMode);
   }, [sport]);
 
   const [savedVenues, setSavedVenues] = useState<Array<{ id: string; name: string; isHome?: boolean }>>([]);
@@ -405,9 +405,10 @@ export default function NewSessionPage() {
           {/* Scoring */}
           <label style={{ display: "grid", gap: "0.4rem" }}>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Scoring</span>
-            <select className="pb-input" value={scoringMode} onChange={e => setScoringMode(e.target.value as "winner_only" | "points")}>
+            <select className="pb-input" value={scoringMode} onChange={e => setScoringMode(e.target.value as ScoringMode)}>
               <option value="points">Full score (e.g. 11–7)</option>
               <option value="winner_only">Win / Loss only</option>
+              <option value="no_scoring">No scoring — finish games only</option>
             </select>
           </label>
         </section>

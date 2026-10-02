@@ -1,5 +1,5 @@
-export type ScoringMode = "winner_only" | "points";
-export const SCORING_MODES: readonly ScoringMode[] = ["winner_only", "points"];
+export type ScoringMode = "winner_only" | "points" | "no_scoring";
+export const SCORING_MODES: readonly ScoringMode[] = ["winner_only", "points", "no_scoring"];
 
 export type ScorePayload = { teamAScore: number; teamBScore: number } | { winnerTeam: "A" | "B" };
 
@@ -43,8 +43,14 @@ export function winRate(row: Pick<LeaderboardRow, "wins" | "gamesPlayed">): numb
  * Tiebreakers:
  *   points:      win% → wins → pointDifference → gamesPlayed → displayName
  *   winner_only: win% → wins → gamesPlayed → fewer sitOuts → displayName
+ *   no_scoring:  gamesPlayed → displayName
  */
 export function leaderboardCompare(a: LeaderboardRow, b: LeaderboardRow, mode: ScoringMode): number {
+  if (mode === "no_scoring") {
+    if (b.gamesPlayed !== a.gamesPlayed) return b.gamesPlayed - a.gamesPlayed;
+    return (a.displayName ?? "").localeCompare(b.displayName ?? "");
+  }
+
   const aGames = Math.max(0, a.gamesPlayed);
   const bGames = Math.max(0, b.gamesPlayed);
   if (aGames === 0 || bGames === 0) {

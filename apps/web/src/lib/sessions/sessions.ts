@@ -2,7 +2,7 @@ import { addDoc, collection, doc, getDoc, serverTimestamp, setDoc, onSnapshot, q
 import { getFirebaseServices } from "@/lib/firebase/client";
 import { generateJoinCode } from "@picklebaddies/domain";
 import type { Session, SessionCourt, SessionPlayer } from "./types";
-import type { SkillLevel, Sport } from "@picklebaddies/domain";
+import type { ScoringMode, SkillLevel, Sport } from "@picklebaddies/domain";
 import { logEvent } from "@/lib/analytics/events";
 import { safeUnsubscribe, watchWithFallback } from "@/lib/realtime/watchWithFallback";
 
@@ -15,7 +15,7 @@ export interface CreateSessionInput {
   startsAt: Date;
   durationMinutes: number;
   estimatedGameMinutes: number;
-  scoringMode: "winner_only" | "points";
+  scoringMode: ScoringMode;
   sessionFormat?: "social_rotation" | "fixed_pair_round_robin";
 }
 

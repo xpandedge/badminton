@@ -313,14 +313,23 @@ export async function completeMatchWithoutScore(
       const teamAIds: string[] = match.teamAIds || match.teamA.map((p: any) => p.playerId);
       const teamBIds: string[] = match.teamBIds || match.teamB.map((p: any) => p.playerId);
       const allPlayerIds = [...teamAIds, ...teamBIds];
+      const roundRobinTeamAId = typeof match.roundRobinTeamAId === "string" ? match.roundRobinTeamAId : null;
+      const roundRobinTeamBId = typeof match.roundRobinTeamBId === "string" ? match.roundRobinTeamBId : null;
       const playerRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/players/${id}`));
       const lbRefs = allPlayerIds.map((id) => db.doc(`sessions/${sessionId}/leaderboard/${id}`));
+      const teamLeaderboardRefs = roundRobinTeamAId && roundRobinTeamBId
+        ? [
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamAId}`),
+          db.doc(`sessions/${sessionId}/teamLeaderboard/${roundRobinTeamBId}`),
+        ]
+        : [];
 
       const auto = await readAutoFillInputs(t, db, sessionId, matchId);
 
-      const [playerDocs, lbDocs] = await Promise.all([
+      const [playerDocs, lbDocs, teamLeaderboardDocs] = await Promise.all([
         Promise.all(playerRefs.map((r) => t.get(r))),
         Promise.all(lbRefs.map((r) => t.get(r))),
+        Promise.all(teamLeaderboardRefs.map((r) => t.get(r))),
       ]);
 
       // ── THEN ALL WRITES ──
@@ -329,6 +338,12 @@ export async function completeMatchWithoutScore(
         const lbData = lbDocs[i]?.data() ?? {};
         t.set(playerRefs[i]!, { ...pData, gamesPlayed: (pData.gamesPlayed || 0) + 1 }, { merge: true });
         t.set(lbRefs[i]!, { ...lbData, gamesPlayed: (lbData.gamesPlayed || 0) + 1 }, { merge: true });
+      }
+      if (teamLeaderboardRefs.length === 2) {
+        for (let i = 0; i < teamLeaderboardRefs.length; i++) {
+          const teamData = teamLeaderboardDocs[i]?.data() ?? {};
+          t.set(teamLeaderboardRefs[i]!, { ...teamData, gamesPlayed: (teamData.gamesPlayed || 0) + 1 }, { merge: true });
+        }
       }
 
       t.update(matchRef, {

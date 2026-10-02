@@ -11,3 +11,4 @@ export * from "./squad-archive.js";
 export * from "./admin-metrics.js";
 export * from "./round-robin.js";
 export * from "./player-gender.js";
+export * from "./social-play-mode.js";

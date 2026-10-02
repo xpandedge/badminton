@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createSession } from "@/server/sessions/actions";
 import { getOrCreateDefaultSquad } from "@/server/squads/actions";
-import { SPORTS, getSportConfig, type ScoringMode, type Sport } from "@picklebaddies/domain";
+import { SPORTS, getSportConfig, type ScoringMode, type SocialPlayMode, type Sport } from "@picklebaddies/domain";
 import { watchUserGroups } from "@/lib/groups/groups";
 import { watchVenues, watchCourts } from "@/lib/groups/venues";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -31,6 +31,7 @@ export default function NewSessionPage() {
   const [scheduledTime, setScheduledTime] = useState("");
   const [scoringMode, setScoringMode] = useState<ScoringMode>("points");
   const [sessionFormat, setSessionFormat] = useState<"social_rotation" | "fixed_pair_round_robin">("social_rotation");
+  const [socialPlayMode, setSocialPlayMode] = useState<SocialPlayMode>("random");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -116,6 +117,7 @@ export default function NewSessionPage() {
         estimatedGameMinutes: ESTIMATED_GAME_MINUTES,
         scoringMode,
         sessionFormat,
+        socialPlayMode: sessionFormat === "social_rotation" ? socialPlayMode : undefined,
         venueName,
         startsAtIso: scheduledTime ? new Date(scheduledTime).toISOString() : undefined,
       });
@@ -401,6 +403,40 @@ export default function NewSessionPage() {
               ))}
             </div>
           </div>
+
+          {sessionFormat === "social_rotation" && (
+            <div style={{ display: "grid", gap: "0.4rem" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-3)" }}>Game mix</span>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+                {[
+                  { value: "random", label: "Random", hint: "Fast guest entry, no gender needed" },
+                  { value: "mixed_games", label: "Mixed games", hint: "Ask guest gender for mixed play" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSocialPlayMode(option.value as SocialPlayMode)}
+                    style={{
+                      padding: "0.75rem",
+                      borderRadius: "var(--r-lg)",
+                      border: socialPlayMode === option.value ? "2px solid var(--ink-800)" : "1.5px solid var(--border)",
+                      background: socialPlayMode === option.value ? "var(--ink-800)" : "var(--surface-sunken)",
+                      color: socialPlayMode === option.value ? "var(--volt-500)" : "var(--text-2)",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      fontSize: "0.8125rem",
+                      display: "grid",
+                      gap: "0.2rem",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.04em", opacity: 0.8 }}>{option.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Scoring */}
           <label style={{ display: "grid", gap: "0.4rem" }}>

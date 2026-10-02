@@ -6,6 +6,7 @@ import {
   isSchedulable,
   isSkillLevel,
   parsePlayerGender,
+  requiresGuestGenderForSocialPlayMode,
   type PlayerGender,
   type SessionPlayerStatus,
 } from "@picklebaddies/domain";
@@ -382,7 +383,7 @@ export async function markPlayerInjured(
 export interface AddSessionGuestInput {
   sessionId: string;
   displayName: string;
-  gender: PlayerGender;
+  gender?: PlayerGender;
   skillLevel?: string;
 }
 
@@ -396,8 +397,6 @@ export async function addGuestPlayerToSession(
   if (!sessionId || !displayName || displayName.trim().length < 1) {
     return err("INVALID_ARGUMENT", "sessionId and displayName are required");
   }
-  const parsedGender = parsePlayerGender(input.gender);
-  if (!parsedGender) return err("INVALID_ARGUMENT", "Choose Male, Female, or Non-binary.");
 
   const db = getAdminDb();
   const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
@@ -409,6 +408,11 @@ export async function addGuestPlayerToSession(
       const sessionSnap = await t.get(sessionRef);
       if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
       const session = sessionSnap.data()!;
+      const requiresGender = requiresGuestGenderForSocialPlayMode(session.socialPlayMode);
+      const parsedGender = parsePlayerGender(input.gender);
+      if (requiresGender && !parsedGender) {
+        throw Object.assign(new Error("Choose Male, Female, or Non-binary."), { code: "INVALID_ARGUMENT" });
+      }
 
       const memberSnap = await t.get(db.doc(`groups/${session.groupId}/members/${user.uid}`));
       const role = memberSnap.exists ? (memberSnap.data() as any).role : null;
@@ -424,7 +428,7 @@ export async function addGuestPlayerToSession(
       t.set(db.doc(`sessions/${sessionId}/players/${playerId}`), {
         playerId,
         displayName: name,
-        gender: parsedGender,
+        ...(parsedGender ? { gender: parsedGender } : {}),
         skillLevel,
         status: "active",
         participantType: "guest",
@@ -452,7 +456,7 @@ export async function addGuestPlayerToSession(
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,
         action: "player/guest_added",
-        details: { playerId, displayName: name, gender: parsedGender },
+        details: { playerId, displayName: name, ...(parsedGender ? { gender: parsedGender } : {}) },
         createdAt: FieldValue.serverTimestamp(),
       });
 
@@ -463,6 +467,7 @@ export async function addGuestPlayerToSession(
   } catch (e: any) {
     if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
     if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "INVALID_ARGUMENT") return err("INVALID_ARGUMENT", e.message);
     throw e;
   }
 }

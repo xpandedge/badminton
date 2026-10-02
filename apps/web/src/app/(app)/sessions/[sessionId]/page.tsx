@@ -10,6 +10,7 @@ import {
   canManageSessionPlayers,
   PLAYER_GENDER_LABELS,
   PLAYER_GENDERS,
+  requiresGuestGenderForSocialPlayMode,
   type PlayerGender,
 } from "@picklebaddies/domain";
 import { shareUrl } from "@/lib/config/site";
@@ -96,6 +97,8 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const { user: currentUser } = useAuth();
   const role = useGroupRole(session?.groupId ?? null);
   const canManage = canManageSessionPlayers(role);
+  const guestGenderRequired = requiresGuestGenderForSocialPlayMode(session?.socialPlayMode);
+  const canAddGuest = !!guestName.trim() && (!guestGenderRequired || !!guestGender) && !isAddingGuest;
   const isGroupMember = role !== null;
 
   const activePlayers = players.filter((p) => p.status !== "removed" && p.status !== "left");
@@ -175,14 +178,14 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
 
   const handleAddGuest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!guestName.trim() || !guestGender || isAddingGuest || !canManage) return;
+    if (!canAddGuest || !canManage) return;
     setIsAddingGuest(true);
     setGuestError(null);
     try {
       const result = await addGuestPlayerToSession({
         sessionId,
         displayName: guestName,
-        gender: guestGender,
+        gender: guestGender || undefined,
         skillLevel: guestSkill,
       });
       if (result.data.rebalanceRecommended) {
@@ -1276,19 +1279,21 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                     required
                     style={{ height: 44, borderRadius: "var(--r-md)" }}
                   />
-                  <select
-                    className="pb-input"
-                    value={guestGender}
-                    onChange={(e) => setGuestGender(e.target.value as PlayerGender | "")}
-                    style={{ height: 44, borderRadius: "var(--r-md)" }}
-                    aria-label="Guest gender"
-                    required
-                  >
-                    <option value="" disabled>Gender</option>
-                    {PLAYER_GENDERS.map((option) => (
-                      <option key={option} value={option}>{PLAYER_GENDER_LABELS[option]}</option>
-                    ))}
-                  </select>
+                  {guestGenderRequired && (
+                    <select
+                      className="pb-input"
+                      value={guestGender}
+                      onChange={(e) => setGuestGender(e.target.value as PlayerGender | "")}
+                      style={{ height: 44, borderRadius: "var(--r-md)" }}
+                      aria-label="Guest gender"
+                      required
+                    >
+                      <option value="" disabled>Gender</option>
+                      {PLAYER_GENDERS.map((option) => (
+                        <option key={option} value={option}>{PLAYER_GENDER_LABELS[option]}</option>
+                      ))}
+                    </select>
+                  )}
                   <select
                     className="pb-input"
                     value={guestSkill}
@@ -1304,11 +1309,11 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   <button
                     type="submit"
                     data-testid="session-detail-guest-add-btn"
-                    disabled={!guestName.trim() || !guestGender || isAddingGuest}
+                    disabled={!canAddGuest}
                     style={{
                       minHeight: 44, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)",
                       background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900,
-                      opacity: guestName.trim() && guestGender && !isAddingGuest ? 1 : 0.5, cursor: isAddingGuest ? "wait" : "pointer", whiteSpace: "nowrap",
+                      opacity: canAddGuest ? 1 : 0.5, cursor: isAddingGuest ? "wait" : "pointer", whiteSpace: "nowrap",
                     }}
                   >
                     {isAddingGuest ? "Adding..." : "Add guest"}

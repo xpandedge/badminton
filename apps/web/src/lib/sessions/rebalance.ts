@@ -36,7 +36,7 @@ export async function addLatePlayer(data: { sessionId: string; playerId: string;
   return { data: result.data };
 }
 
-export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; gender: PlayerGender; skillLevel?: string }) {
+export async function addGuestPlayerToSession(data: { sessionId: string; displayName: string; gender?: PlayerGender; skillLevel?: string }) {
   const result = await serverAddGuestSession(data);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };

@@ -19,4 +19,4 @@
 - [x] Replace live court section with component; correct existing disable active count.
 - [x] Run focused Vitest and web typecheck; inspect diff. Leave deployment and authenticated browser acceptance explicitly unverified.
 
-Validation: 15 focused tests passed; web TypeScript passed. Authenticated browser acceptance and deployment remain unverified. Plan retained here pending acceptance.
+Validation: 15 focused tests passed; web TypeScript passed. Committed directly on main and pushed to origin/main as f8ba8d7 on 2026-10-05 (the checkout was already on main, so no separate branch merge was needed). Production deployment dpl_CKEt7PzTyWzja73hrq1HtK4xTPoj reached READY, and duorally.com.au plus www.duorally.com.au were verified as its aliases. The remote production build passed. Authenticated browser acceptance remains unverified; retain this plan here pending that acceptance. Its location does not mean the implementation is uncommitted or safe to remove.

@@ -19,5 +19,9 @@ test.describe("session creation", () => {
 
     // The detail page should show the session name.
     await expect(page.getByText(sessionName).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("link", { name: "Connect a TV" })).toHaveAttribute(
+      "href",
+      /\/board\/[^/]+\/connect$/,
+    );
   });
 });

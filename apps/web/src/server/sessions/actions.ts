@@ -26,10 +26,11 @@ import {
 } from "@picklebaddies/domain";
 import { getAdminDb, getAdminAuth } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
-import { ok, err, type ActionResult } from "@/server/result";
+import { ok, err, checkRateLimit, type ActionResult } from "@/server/result";
 import { toPlain } from "@/server/lib/serialize";
 import { requireActiveSquad } from "@/server/squads/actions";
 import { reconcileSquadRatingsForSession } from "./squad-rating";
+import { selectRepeatPlayers } from "@/lib/sessions/repeat";
 
 export async function requireActiveSessionSquad(
   db: FirebaseFirestore.Firestore,
@@ -253,6 +254,91 @@ export async function createSession(
   return ok({ sessionId: sessionRef.id, joinCode, scoreCode, rsvpCode });
 }
 
+export interface RepeatSessionInput {
+  sourceSessionId: string;
+  name: string;
+  startsAtIso: string;
+  selectedPlayerIds: string[];
+}
+
+/** Create a clean draft from a completed session after the organiser reviews attendance. */
+export async function repeatSession(
+  input: RepeatSessionInput,
+): Promise<ActionResult<{ sessionId: string; joinCode: string; scoreCode: string; rsvpCode: string }>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!input.sourceSessionId || !input.name.trim() || input.name.trim().length < 2) {
+    return err("INVALID_ARGUMENT", "Session name must be at least 2 characters");
+  }
+  const startsAtDate = new Date(input.startsAtIso);
+  if (Number.isNaN(startsAtDate.getTime())) return err("INVALID_ARGUMENT", "Choose a valid start time");
+
+  const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, input.sourceSessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
+
+  try {
+    await checkRateLimit(`repeat-session:${user.uid}:${input.sourceSessionId}`, { maxRequests: 5, windowMs: 60_000 });
+    const sourceRef = db.doc(`sessions/${input.sourceSessionId}`);
+    const [sourceSnap, sourcePlayersSnap, memberSnap] = await Promise.all([
+      sourceRef.get(),
+      db.collection(`sessions/${input.sourceSessionId}/players`).get(),
+      db.doc(`groups/${activeSquad.data.groupId}/members/${user.uid}`).get(),
+    ]);
+    if (!sourceSnap.exists) return err("NOT_FOUND", "Source session not found");
+    const source = sourceSnap.data()!;
+    if (source.status !== "completed") return err("FAILED_PRECONDITION", "Only completed sessions can be repeated");
+    const role = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }).role ?? null : null;
+    if (!canCreateSession(role)) return err("FORBIDDEN", "Only group owners and admins can repeat sessions");
+
+    const sourcePlayers = sourcePlayersSnap.docs.map((doc) => ({ playerId: doc.id, ...doc.data() })) as Array<{
+      playerId: string; displayName: string; skillLevel?: string; status?: string;
+      participantType?: string; gender?: string; squadRating?: number;
+    }>;
+    const players = selectRepeatPlayers(sourcePlayers, input.selectedPlayerIds);
+    const sourceCourts = Array.isArray(source.courts) ? source.courts : [];
+    if (sourceCourts.length === 0) return err("FAILED_PRECONDITION", "The source session has no courts to reuse");
+
+    const sessionRef = db.collection("sessions").doc();
+    const joinCode = generateJoinCode();
+    const scoreCode = generateJoinCode();
+    const rsvpCode = generateJoinCode();
+    const isFuture = startsAtDate.getTime() > Date.now() + 60_000;
+    const sourceCapacity = source.rsvpCapacity ?? {};
+    const rsvpCapacity = normalizeSessionRsvpCapacity(sourceCapacity);
+    const batch = db.batch();
+    batch.set(sessionRef, {
+      groupId: source.groupId, venueId: source.venueId ?? null, venueName: String(source.venueName ?? "").trim(),
+      name: input.name.trim(), sport: source.sport, status: isFuture ? "scheduled" : "draft", startsAt: startsAtDate,
+      durationMinutes: Number(source.durationMinutes ?? 90), estimatedGameMinutes: Number(source.estimatedGameMinutes ?? 15),
+      courts: sourceCourts, courtCount: sourceCourts.length, scoringMode: source.scoringMode,
+      sessionFormat: source.sessionFormat ?? "social_rotation", ...(source.socialPlayMode ? { socialPlayMode: source.socialPlayMode } : {}),
+      createdBy: user.uid, rsvpGoingCount: 0, rsvpNotGoingCount: 0, rsvpCode, rsvpEnabled: true,
+      rsvpCapacity: { ...rsvpCapacity, cutoffAt: null }, joinCode, joinEnabled: true, scoreCode,
+      scoreLinkEnabled: true, boardEnabled: source.boardEnabled !== false, scheduleGeneratedAt: null,
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    });
+    for (const player of players) {
+      batch.set(sessionRef.collection("players").doc(player.playerId), {
+        playerId: player.playerId, displayName: player.displayName, skillLevel: player.skillLevel,
+        ...(player.gender ? { gender: player.gender } : {}), ...(player.squadRating === undefined ? {} : { squadRating: player.squadRating }),
+        status: "active", participantType: "registered_user", gamesPlayed: 0, wins: 0, losses: 0,
+        pointsFor: 0, pointsAgainst: 0, sitOutCount: 0, availableFromRound: 1,
+      });
+    }
+    batch.set(sessionRef.collection("auditLogs").doc(), {
+      actorUid: user.uid, action: "session/repeated",
+      details: { sourceSessionId: input.sourceSessionId, selectedPlayerCount: players.length },
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return ok({ sessionId: sessionRef.id, joinCode, scoreCode, rsvpCode });
+  } catch (error: any) {
+    if (error.code === "RESOURCE_EXHAUSTED") return err("RESOURCE_EXHAUSTED", error.message);
+    return err("INTERNAL", error.message || "Could not repeat this session");
+  }
+}
+
 // ── Session lifecycle helpers ─────────────────────────────────────────────────
 
 const STATUS_TRANSITIONS: Record<string, { from: string[]; action: string }> = {
@@ -343,6 +429,7 @@ export async function updateSessionStatus(
 
 export interface SessionSummaryData {
   id: string;
+  scoreCode?: string;
   name: string;
   sport: string;
   status: string;
@@ -488,6 +575,7 @@ export async function getMySessionsAction(): Promise<ActionResult<{
       : null;
     return {
       id: d.id,
+      scoreCode: typeof data.scoreCode === "string" ? data.scoreCode : undefined,
       name: data.name ?? "",
       sport: data.sport ?? "badminton",
       status: data.status ?? "draft",

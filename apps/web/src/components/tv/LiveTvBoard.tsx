@@ -22,7 +22,7 @@ export function LiveTvBoard({ code }: { code: string }) {
           if (["NOT_FOUND", "FORBIDDEN", "UNAUTHENTICATED"].includes(result.code)) setSnapshot(null);
         }
       } catch { if (!disposed) setError("Connection lost. Retrying automatically…"); }
-      finally { if (!disposed) timer = setTimeout(poll, 15_000); }
+    finally { if (!disposed) timer = setTimeout(poll, 5_000); }
     }
     void poll();
     return () => { disposed = true; clearTimeout(timer); };

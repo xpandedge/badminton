@@ -19,7 +19,7 @@ export function TokenTv({ token }: { token: string }) {
         if (disposed) return;
         if (result.ok) {
           setError("");
-          if (result.data) { setSnapshot({ data: result.data, updatedAt: Date.now() }); delay = 15_000; }
+          if (result.data) { setSnapshot({ data: result.data, updatedAt: Date.now() }); delay = 5_000; }
         } else {
           setError(result.message);
           if (["NOT_FOUND", "FORBIDDEN", "UNAUTHENTICATED"].includes(result.code)) { setSnapshot(null); return; }

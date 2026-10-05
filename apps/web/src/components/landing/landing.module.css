@@ -1,0 +1,34 @@
+.eyebrow { color:#52634e; display:block; font:500 10px var(--font-mono); letter-spacing:.1em; text-transform:uppercase; }
+.landingHeading { max-width:620px; margin-bottom:42px; }
+.landingHeading .eyebrow { margin-bottom:18px; }
+.landingHeading h2,.painIntro h2,.offer h2 { margin:0; font:800 clamp(2rem,3.6vw,3.5rem)/1.08 var(--font-display-tight); letter-spacing:-.045em; color:#16241c; }
+.landingHeading p,.painIntro p,.offer p { color:#536351; line-height:1.65; }
+.pain { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:80px; padding:90px max(5%,calc((100vw - 1190px)/2)); background:#f5f6ef; }
+.painIntro h2 { margin:18px 0; }
+.painIntro p { max-width:390px; }
+.painList { border-top:1px solid #cbd5c1; }
+.painItem { display:grid; grid-template-columns:44px 1fr 24px; gap:20px; align-items:start; padding:23px 0; border-bottom:1px solid #cbd5c1; }
+.painNumber,.capabilityNumber { color:#52634e; font:10px var(--font-mono); padding-top:5px; }
+.painItem h3,.capability h3,.audienceRow h3 { margin:0 0 7px; color:#16241c; font:800 1.35rem/1.1 var(--font-display-tight); letter-spacing:-.025em; }
+.painItem p,.capability p,.audienceRow p { margin:0; color:#536351; line-height:1.55; font-size:14px; }
+.painMark { color:#71991a; font-size:24px; transform:rotate(-20deg); }
+.capabilities { padding:90px max(5%,calc((100vw - 1190px)/2)); background:#e8eddf; }
+.capabilityRail { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:0; border-top:1px solid #adbea7; border-bottom:1px solid #adbea7; }
+.capability { position:relative; min-height:220px; padding:22px 22px 26px 0; border-right:1px solid #adbea7; }
+.capability+.capability { padding-left:22px; }
+.capability:last-child { border-right:0; }
+.capabilityCourt { display:block; height:46px; width:70px; margin:14px 0 20px; border:1px solid #77936d; position:relative; }
+.capabilityCourt::before,.capabilityCourt::after { content:""; position:absolute; top:0; bottom:0; border-inline:1px solid #9ab096; width:19px; }
+.capabilityCourt::before { left:17px; }.capabilityCourt::after { right:17px; }
+.capabilityCourt i { position:absolute; width:10px; height:10px; border-radius:50%; background:#16241c; top:18px; left:9px; z-index:1; }.capabilityCourt i::after { content:""; position:absolute; left:34px; width:10px; height:10px; border-radius:50%; background:#c6f135; }
+.capabilityCourt .activeCourt { left:42px; }.capabilityCourt .activeCourt::after { left:-34px; }
+.audience { padding:90px max(5%,calc((100vw - 1190px)/2)); background:#f5f6ef; }
+.audienceRows { border-top:1px solid #cbd5c1; }
+.audienceRow { display:grid; grid-template-columns:110px 1fr 30px; gap:28px; align-items:center; padding:26px 0; border-bottom:1px solid #cbd5c1; }
+.audienceVisual { display:flex; align-items:center; gap:5px; position:relative; height:74px; border:1px solid #a9baa4; padding:12px; }
+.audienceVisual>span { position:absolute; top:5px; left:6px; color:#52634e; font:9px var(--font-mono); }.audienceVisual i { display:block; width:14px; height:14px; border-radius:50%; background:#c6f135; border:2px solid #d8ed91; }.audienceVisual i:nth-child(3) { background:#20342a; border-color:#20342a; }.audienceVisual i:nth-child(4) { background:#f5f6ef; border-color:#8ca48a; }
+.audienceRow h3 { margin-top:8px; }.audienceArrow { color:#71991a; font-size:27px; }.stepNumber { color:#52634e; font:500 10px var(--font-mono); letter-spacing:.1em; text-transform:uppercase; }
+.offer { display:flex; justify-content:space-between; align-items:center; gap:50px; padding:72px max(5%,calc((100vw - 1190px)/2)); background:#20342a; color:#f5f6ef; }.offer .eyebrow { color:#c6f135; margin-bottom:18px; }.offer h2 { color:#f5f6ef; max-width:600px; }.offer p { color:#c4cec5; margin-top:18px; max-width:460px; }.offerActions { display:flex; flex-direction:column; gap:16px; min-width:220px; }.offerPrimary,.offerSecondary { display:inline-flex; align-items:center; justify-content:space-between; min-height:50px; padding:14px 18px; }.offerPrimary { background:#c6f135; color:#16241c; font-weight:700; }.offerSecondary { color:#f5f6ef; border-bottom:1px solid #667b6a; }.faq { display:grid; grid-template-columns:1fr 1.3fr; gap:64px; padding:90px max(5%,calc((100vw - 1190px)/2)); background:#f5f6ef; }.faq details { border-bottom:1px solid #cbd5c1; }.faq summary { display:flex; justify-content:space-between; gap:20px; list-style:none; cursor:pointer; padding:22px 0; font-weight:600; }.faq summary::-webkit-details-marker { display:none; }.faq details[open] summary>span { transform:rotate(45deg); }.faq details p { padding:0 0 24px; color:#536351; line-height:1.65; margin:0; }
+.mobileCta { display:none; }
+@media (max-width:800px) { .pain,.capabilities,.audience,.faq { padding:58px 6%; }.pain { grid-template-columns:1fr; gap:34px; }.landingHeading { margin-bottom:30px; }.capabilityRail { grid-template-columns:1fr; }.capability,.capability+.capability { min-height:0; padding:20px 0; border-right:0; border-bottom:1px solid #adbea7; display:grid; grid-template-columns:44px 84px 1fr; column-gap:14px; align-items:center; }.capability:last-child { border-bottom:0; }.capabilityCourt { grid-column:2; grid-row:1 / span 2; margin:0; }.capability h3 { grid-column:3; }.capability p { grid-column:3; }.audienceRow { grid-template-columns:78px 1fr 20px; gap:15px; }.audienceVisual { height:62px; padding:7px; }.audienceVisual i { width:11px; height:11px; }.offer { padding:54px 6%; display:block; }.offerActions { margin-top:28px; }.faq { display:block; }.faq>div:first-child { margin-bottom:28px; }.mobileCta { display:flex; position:fixed; z-index:20; left:12px; right:12px; bottom:12px; transform:translateY(140%); opacity:0; transition:transform .25s ease,opacity .25s ease; padding:8px; gap:8px; align-items:center; background:#16241c; box-shadow:0 12px 35px #16241c33; border:1px solid #536951; border-radius:6px; }.mobileCtaVisible { transform:translateY(0); opacity:1; }.mobileCta a { min-height:44px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between; gap:12px; color:#16241c; background:#c6f135; font-size:13px; font-weight:700; flex:1; }.mobileCta .mobileCtaSecondary { flex:0 0 auto; background:transparent; color:#f5f6ef; font-weight:600; padding-inline:8px; } }
+@media (prefers-reduced-motion:reduce) { .mobileCta { transition:none; } }

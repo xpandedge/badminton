@@ -13,6 +13,7 @@ export interface LogoProps {
   size?: number; // mark height in px; wordmark scales to match
   animated?: boolean;
   showKicker?: boolean; // force the sport kicker line below wordmark
+  prominent?: boolean; // compact header treatment with stronger lettering and paddle colour
   className?: string;
   style?: React.CSSProperties;
 }
@@ -61,10 +62,12 @@ interface MarkProps {
   theme: LogoTheme;
   animated: boolean;
   pressing: boolean;
+  prominent: boolean;
 }
 
-function Mark({ size, theme, animated, pressing }: MarkProps) {
+function Mark({ size, theme, animated, pressing, prominent }: MarkProps) {
   const tok = getTokens(theme);
+  const paddleColor = prominent && theme === "light" ? "#34834A" : tok.racketB;
 
   // Respect prefers-reduced-motion
   const [reducedMotion, setReducedMotion] = useState(false);
@@ -147,8 +150,8 @@ function Mark({ size, theme, animated, pressing }: MarkProps) {
           transformOrigin: "60px 86px",
         }}
       >
-        <rect x="57" y="46" width="6" height="66" rx="3" fill={tok.racketB} stroke={tok.keyline} strokeWidth="4" />
-        <rect x="40" y="2" width="40" height="48" rx="11" fill={tok.racketB} stroke={tok.keyline} strokeWidth="4" />
+        <rect x="57" y="46" width="6" height="66" rx="3" fill={paddleColor} stroke={tok.keyline} strokeWidth="4" />
+        <rect x="40" y="2" width="40" height="48" rx="11" fill={paddleColor} stroke={tok.keyline} strokeWidth="4" />
       </g>
 
       {/* Shuttle */}
@@ -189,11 +192,12 @@ interface WordmarkProps {
   showKicker?: boolean;
   animated: boolean;
   splashDone: boolean;
+  prominent: boolean;
 }
 
-function Wordmark({ theme, markSize, showKicker, animated, splashDone }: WordmarkProps) {
+function Wordmark({ theme, markSize, showKicker, animated, splashDone, prominent }: WordmarkProps) {
   const tok = getTokens(theme);
-  const fontSize = markSize * 0.36;
+  const fontSize = prominent ? 18 : markSize * 0.36;
   const kickerSize = fontSize * 0.42;
 
   const fadeStyle: React.CSSProperties = animated && !splashDone
@@ -250,6 +254,7 @@ export function Logo({
   size = 40,
   animated = false,
   showKicker: showKickerProp,
+  prominent = false,
   className,
   style,
 }: LogoProps) {
@@ -293,6 +298,7 @@ export function Logo({
           theme={theme}
           animated={animated}
           pressing={pressing}
+          prominent={prominent}
         />
       )}
       {effectiveVariant !== "mark" && (
@@ -302,6 +308,7 @@ export function Logo({
           showKicker={showKicker}
           animated={animated}
           splashDone={splashDone}
+          prominent={prominent}
         />
       )}
     </div>

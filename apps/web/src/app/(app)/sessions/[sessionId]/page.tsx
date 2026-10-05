@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, use } from "react";
+import { useRouter } from "next/navigation";
 import { watchSession, watchSessionPlayers, updateSessionDraft } from "@/lib/sessions/sessions";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
 import { useGroupRole } from "@/lib/groups/useGroupRole";
@@ -25,6 +26,7 @@ import {
   removeCasualRsvp,
   syncConfirmedRsvpsToSessionPlayers,
   updateSessionRsvpCapacity,
+  repeatSession,
   type SessionRsvpAdminRoster,
 } from "@/server/sessions/actions";
 import { formatSessionStatus, formatPlayerStatus, formatScoringMode } from "@/lib/format/status";
@@ -88,6 +90,12 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [rsvpCopied, setRsvpCopied] = useState(false);
   const [isCreatingRsvpLink, setIsCreatingRsvpLink] = useState(false);
   const [rsvpCreateError, setRsvpCreateError] = useState<string | null>(null);
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const [repeatName, setRepeatName] = useState("");
+  const [repeatStartsAt, setRepeatStartsAt] = useState("");
+  const [repeatSelectedIds, setRepeatSelectedIds] = useState<string[]>([]);
+  const [repeatBusy, setRepeatBusy] = useState(false);
+  const [repeatError, setRepeatError] = useState<string | null>(null);
 
   // Add court state
   const [addCourtName, setAddCourtName] = useState("");
@@ -95,6 +103,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [addCourtError, setAddCourtError] = useState<string | null>(null);
 
   const { user: currentUser } = useAuth();
+  const router = useRouter();
   const role = useGroupRole(session?.groupId ?? null);
   const canManage = canManageSessionPlayers(role);
   const guestGenderRequired = requiresGuestGenderForSocialPlayMode(session?.socialPlayMode);
@@ -102,6 +111,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const isGroupMember = role !== null;
 
   const activePlayers = players.filter((p) => p.status !== "removed" && p.status !== "left");
+  const repeatablePlayers = activePlayers.filter((p) => p.participantType === "registered_user");
   // Match by both playerId (uid) and also by the group player doc ID for cases where they differ
   const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
   const currentUserInSession = currentUser ? activePlayerIds.has(currentUser.uid) : false;
@@ -161,6 +171,36 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
     } finally {
       setAddingId(null);
     }
+  };
+
+  const openRepeat = () => {
+    if (!session) return;
+    const sourceDate = new Date(toInputDateTime(session.startsAt) || Date.now());
+    sourceDate.setDate(sourceDate.getDate() + 7);
+    setRepeatName(`${session.name} — new session`);
+    setRepeatStartsAt(toInputDateTime(sourceDate));
+    setRepeatSelectedIds(repeatablePlayers.map((player) => player.playerId));
+    setRepeatError(null);
+    setRepeatOpen(true);
+  };
+
+  const handleRepeat = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!session || repeatBusy || repeatSelectedIds.length === 0 || !repeatStartsAt) return;
+    setRepeatBusy(true);
+    setRepeatError(null);
+    const result = await repeatSession({
+      sourceSessionId: sessionId,
+      name: repeatName,
+      startsAtIso: new Date(repeatStartsAt).toISOString(),
+      selectedPlayerIds: repeatSelectedIds,
+    }).catch((error) => ({ ok: false as const, message: error.message }));
+    if (!result.ok) {
+      setRepeatError(result.message);
+      setRepeatBusy(false);
+      return;
+    }
+    router.push(`/sessions/${result.data.sessionId}`);
   };
 
   const handleAddAllToSession = async () => {
@@ -472,7 +512,50 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   {addingId === currentUser.uid ? "Joining…" : "Join Session"}
                 </button>
               )}
+              {canManage && session.status === "completed" && (
+                <button
+                  type="button"
+                  onClick={openRepeat}
+                  style={{
+                    height: 48,
+                    padding: "0 1rem",
+                    borderRadius: "var(--r-lg)",
+                    background: "rgba(246,248,244,0.1)",
+                    border: "1px solid rgba(246,248,244,0.34)",
+                    color: "var(--n-50)",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    fontSize: "0.9375rem",
+                  }}
+                >
+                  Run this session again
+                </button>
+              )}
               <div style={{ display: "grid", gap: "0.35rem", justifyItems: "end" }}>
+                {session.scoreCode && (
+                  <a
+                    href={`/board/${encodeURIComponent(session.scoreCode)}/connect`}
+                    style={{
+                      height: 48,
+                      padding: "0 1rem",
+                      borderRadius: "var(--r-lg)",
+                      background: "rgba(198,241,53,0.16)",
+                      border: "2px solid var(--volt-500)",
+                      color: "var(--volt-500)",
+                      fontWeight: 900,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                      textDecoration: "none",
+                    }}
+                  >
+                    Connect a TV
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="3" y="5" width="18" height="12" rx="2" />
+                      <path d="M8 21h8M12 17v4" />
+                    </svg>
+                  </a>
+                )}
                 <a
                   href={`/sessions/${sessionId}/live`}
                   style={{
@@ -540,6 +623,85 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
           </div>
         </div>
       </section>
+
+      {repeatOpen && (
+        <div
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget && !repeatBusy) setRepeatOpen(false); }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 50,
+            background: "rgba(11,19,14,0.72)",
+            display: "grid",
+            placeItems: "center",
+            padding: "1rem",
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="repeat-session-title"
+            onSubmit={handleRepeat}
+            style={{
+              width: "min(100%, 560px)",
+              maxHeight: "min(760px, calc(100vh - 2rem))",
+              overflowY: "auto",
+              background: "var(--surface)",
+              color: "var(--text-1)",
+              borderRadius: "var(--r-2xl)",
+              padding: "1.25rem",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "flex-start" }}>
+              <div>
+                <span className="pb-mono-label">New draft from this session</span>
+                <h2 id="repeat-session-title" style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.65rem", marginTop: "0.35rem" }}>
+                  Run this session again
+                </h2>
+              </div>
+              <button type="button" onClick={() => setRepeatOpen(false)} disabled={repeatBusy} aria-label="Close repeat session dialog" style={{ border: 0, background: "transparent", fontSize: "1.5rem", cursor: "pointer", color: "var(--text-2)" }}>×</button>
+            </div>
+            <p style={{ color: "var(--text-2)", margin: "0.75rem 0 1rem", lineHeight: 1.5 }}>
+              Reuse the courts and format, then confirm who is coming. Scores, matches and old share links stay with the previous session.
+            </p>
+            <label style={{ display: "grid", gap: "0.35rem", fontWeight: 800, marginBottom: "0.8rem" }}>
+              Session name
+              <input value={repeatName} onChange={(event) => setRepeatName(event.target.value)} required minLength={2} style={{ minHeight: 46, border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", padding: "0 0.75rem", font: "inherit" }} />
+            </label>
+            <label style={{ display: "grid", gap: "0.35rem", fontWeight: 800, marginBottom: "1rem" }}>
+              Start time
+              <input type="datetime-local" value={repeatStartsAt} onChange={(event) => setRepeatStartsAt(event.target.value)} required style={{ minHeight: 46, border: "1px solid var(--border-strong)", borderRadius: "var(--r-md)", padding: "0 0.75rem", font: "inherit" }} />
+            </label>
+            <fieldset style={{ border: "1px solid var(--border)", borderRadius: "var(--r-lg)", padding: "0.75rem", margin: 0 }}>
+              <legend style={{ padding: "0 0.35rem", fontWeight: 900 }}>Players to start with</legend>
+              {repeatablePlayers.length === 0 ? (
+                <p style={{ color: "var(--text-2)", fontSize: "0.875rem" }}>No registered players from this session can be carried into the draft. You can add people after creating it.</p>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "0.45rem" }}>
+                  {repeatablePlayers.map((player) => {
+                    const checked = repeatSelectedIds.includes(player.playerId);
+                    return (
+                      <label key={player.playerId} style={{ display: "flex", gap: "0.55rem", alignItems: "center", minHeight: 44, padding: "0.45rem 0.55rem", borderRadius: "var(--r-md)", background: checked ? "var(--volt-100)" : "var(--surface-sunken)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={checked} onChange={() => setRepeatSelectedIds((current) => checked ? current.filter((id) => id !== player.playerId) : [...current, player.playerId])} />
+                        <span>{player.displayName}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </fieldset>
+            {repeatError && <p role="alert" style={{ color: "var(--danger)", fontWeight: 800, margin: "0.8rem 0 0" }}>{repeatError}</p>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.6rem", marginTop: "1rem", flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setRepeatOpen(false)} disabled={repeatBusy} className="pb-secondary-action">Cancel</button>
+              <button type="submit" disabled={repeatBusy || repeatSelectedIds.length === 0} className="pb-primary-action">
+                {repeatBusy ? "Creating draft…" : "Create new draft"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Court booking — links out to venue booking pages */}
       {isGroupMember && (

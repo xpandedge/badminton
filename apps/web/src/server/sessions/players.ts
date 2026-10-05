@@ -691,7 +691,11 @@ export async function disableCourt(
       if (courtIdx === -1) throw Object.assign(new Error("Court not found in session"), { code: "NOT_FOUND" });
 
       const updatedCourts = courts.map((c: any, i: number) => (i === courtIdx ? { ...c, isActive: false } : c));
-      t.update(sessionRef, { courts: updatedCourts });
+      t.update(sessionRef, {
+        courts: updatedCourts,
+        courtCount: updatedCourts.filter((c: any) => c.isActive).length,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
 
       t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
         actorUid: user.uid,

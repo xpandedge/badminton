@@ -22,6 +22,7 @@ import {
 import { shareUrl } from "@/lib/config/site";
 import { logEvent } from "@/lib/analytics/events";
 import { enterScore, finishGameWithoutScore } from "@/lib/sessions/scoring";
+import { LiveCourts } from "@/components/LiveCourts";
 import { QRCode } from "@/components/QRCode";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import type { Session, SessionPlayer } from "@/lib/sessions/types";
@@ -1210,50 +1211,23 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       </section>
 
       {/* Courts management */}
-      {canManageLive && isLive && session.courts && session.courts.length > 0 && (
-        <section style={{
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-xl)",
-          padding: "1rem",
-          boxShadow: "var(--shadow-sm)",
-          animation: "pb-rise 400ms 90ms var(--ease-out) both",
-        }}>
-          <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, letterSpacing: "-0.02em", marginBottom: "0.875rem" }}>
-            Courts
-          </h2>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-            {session.courts.map((court) => (
-              <div key={court.courtId} style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                padding: "0.5rem 0.75rem",
-                borderRadius: "var(--r-pill)",
-                border: "1px solid var(--border)",
-                background: court.isActive ? "var(--surface-sunken)" : "var(--n-200)",
-                color: court.isActive ? "var(--text-1)" : "var(--text-3)",
-                opacity: court.isActive ? 1 : 0.65,
-                fontWeight: 800,
-              }}>
-                <span>{court.name}</span>
-                {court.isActive && (
-                  <button
-                    onClick={() => handleDisableCourt(court.courtId, court.name)}
-                    disabled={disablingCourtId !== null}
-                    aria-busy={disablingCourtId === court.courtId || undefined}
-                    style={{ border: "none", background: "transparent", color: "var(--danger)", fontWeight: 900, cursor: disablingCourtId !== null ? "default" : "pointer", opacity: disablingCourtId === court.courtId ? 0.55 : 1 }}
-                  >
-                    {disablingCourtId === court.courtId ? "Disabling..." : "Disable"}
-                  </button>
-                )}
-                {!court.isActive && <span style={{ fontSize: "0.75rem" }}>Disabled</span>}
-              </div>
-            ))}
-          </div>
-        </section>
+      {canManageLive && isLive && (
+        <LiveCourts
+          sessionId={sessionId}
+          courts={session.courts ?? []}
+          disabling={disablingCourtId !== null || isRebalancing}
+          onDisable={handleDisableCourt}
+          onAvailabilityChange={async () => {
+            if (isRoundRobinSession) return;
+            const updateGames = await requestConfirmation({
+              title: "Update the next games?",
+              description: "New games will use the available courts. Current and completed games stay unchanged.",
+              confirmLabel: "Update games",
+            });
+            if (updateGames) await handleRebalance("settings_changed");
+          }}
+        />
       )}
-
       <main className="pb-live-main-grid">
         {/* Court-centric live board — each court shows its current match, filled
             automatically the instant it frees up. A bench strip answers "who's

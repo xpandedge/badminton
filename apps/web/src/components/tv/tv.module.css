@@ -1,0 +1,50 @@
+.screen { height: 100vh; height: 100dvh; background: #12231f; color: #f6f8f4; padding: 2vh 2vw; display: flex; flex-direction: column; gap: 2vh; font-family: Arial, sans-serif; overflow: hidden; }
+.demoShell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+.demoShell > .screen { height: auto; min-height: 0; flex: 1; }
+.pairScreen { min-height: 100vh; background: #12231f; color: #f6f8f4; }
+.pairInstructions { padding: 5vh 5vw; font-size: clamp(18px, 2vw, 48px); }
+.pairInstructions h1 { font-size: clamp(32px, 5vw, 100px); }
+.pairCode { display: block; color: #c6f135; font-size: clamp(40px, 8vw, 180px); letter-spacing: .08em; }
+.pairScreen .screen { position: fixed; inset: 0; z-index: 1; }
+.connect { max-width: 680px; margin: 0 auto; padding: 28px 20px; }
+.connect h1 { font-size: 2rem; line-height: 1.1; margin: 28px 0 12px; }
+.connect section { border-top: 1px solid var(--border); padding: 24px 0; }
+.connect h2 { font-size: 1.25rem; margin-bottom: 8px; }
+.connect form { display: grid; gap: 10px; margin-top: 16px; }
+.connect input { min-height: 48px; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 1.2rem; text-transform: uppercase; width: 100%; }
+.connect button, .pairInstructions button { min-height: 48px; border-radius: 8px; padding: 10px 18px; background: #c6f135; color: #12231f; font-weight: 800; cursor: pointer; border: 0; }
+.connect button:disabled { opacity: .55; cursor: default; }
+.connect a { text-decoration: underline; }
+.header { display: flex; align-items: center; gap: 2vw; min-height: 7vh; }
+.brand { font-family: var(--font-display, Arial), sans-serif; font-weight: 900; font-size: 2vw; white-space: nowrap; }
+.brand span { color: #c6f135; }
+.brand small { display: block; font: 700 1vw Arial; letter-spacing: .15em; }
+.header h1 { flex: 1; font-size: clamp(20px, 3vw, 70px); text-transform: uppercase; line-height: 1.05; margin: 0; overflow-wrap: anywhere; }
+.connection { max-width: 23vw; font-size: clamp(12px, 1.3vw, 32px); color: #c6f135; }
+.courts { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 1.4vw; }
+.two { grid-template-rows: minmax(0, 1fr); }
+.court { border: 2px solid #526961; border-radius: .7vw; padding: 1.3vw; min-width: 0; display: flex; flex-direction: column; }
+.highlight { border: 3px solid #c6f135; background: #1e3428; }
+.courtHeading { display: flex; align-items: center; justify-content: space-between; gap: 1vw; padding-bottom: 1vh; border-bottom: 1px solid #526961; }
+.courtHeading h2 { margin: 0; font-size: clamp(18px, 2.6vw, 65px); line-height: 1; text-transform: uppercase; overflow-wrap: anywhere; }
+.courtHeading > span { font-size: 1.3vw; font-weight: 800; color: #c6f135; text-transform: uppercase; }
+.teams { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: .8vw; align-items: center; }
+.teams p { font-size: clamp(16px, 2vw, 55px); font-weight: 800; line-height: 1.2; margin: .65vh 0; overflow-wrap: anywhere; }
+.vs { font-size: 1vw; color: #a5b7ad; }
+.two .teams { grid-template-columns: 1fr; text-align: center; gap: 1vh; }
+.two .teams p { font-size: clamp(22px, 3.2vw, 90px); }
+.two .vs { font-size: 1.5vw; }
+.empty { margin: auto; font-size: 2vw; color: #a5b7ad; }
+.footer { border-top: 1px solid #526961; padding-top: 1vh; }
+.waiting, .notice { display: flex; align-items: center; gap: 1.5vw; min-height: 5vh; font-size: 1.7vw; }
+.waiting b, .notice b { color: #c6f135; font-size: 1.2vw; white-space: nowrap; }
+.waiting span { overflow-wrap: anywhere; }
+.notice { color: #c6f135; font-weight: 800; }
+.notice span { margin-left: auto; font-size: 1.3vw; color: #f6f8f4; }
+.bottom { display: flex; gap: 1vw; align-items: center; justify-content: space-between; font-size: max(11px, 1vw); color: #a5b7ad; }
+.bottom button { border: 1px solid #526961; border-radius: 4px; padding: .25em .7em; color: #f6f8f4; background: transparent; cursor: pointer; }
+.bottom button:focus-visible { outline: 3px solid #c6f135; }
+.results { flex: 1; min-height: 0; font-size: 2vw; }
+.results h2 { font-size: 3vw; margin: 0 0 2vh; }
+.results > div { display: flex; justify-content: space-between; border-bottom: 1px solid #526961; padding: .8vh 0; }
+@media (orientation: portrait) { .screen { min-height: 100vh; height: auto; overflow: auto; } .courts { min-height: 75vh; } .teams { grid-template-columns: 1fr; text-align: center; } .header h1 { font-size: 5vw; } .courtHeading > span, .waiting, .notice, .connection { font-size: 3vw; } .teams p { font-size: 4vw; } .vs, .waiting b, .notice b { font-size: 2.5vw; } }

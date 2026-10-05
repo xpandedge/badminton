@@ -12,10 +12,13 @@ import { ok, err, type ActionResult } from "@/server/result";
 export interface BoardPlayer {
   playerId: string;
   displayName: string;
+  availability?: string;
 }
 
 export interface BoardMatch {
   matchId: string;
+  roundNumber?: number;
+  matchNumber?: number;
   courtId: string;
   courtName: string;
   status: string; // scheduled | in_progress | completed
@@ -48,6 +51,7 @@ export interface BoardData {
   sport: string;
   scoringMode: ScoringMode;
   sessionStatus: string;
+  sessionFormat?: string;
   courts: BoardCourt[];
   roster: BoardPlayer[];       // active players, for the name picker
   matches: BoardMatch[];       // scheduled + in_progress + completed (session-scale, bounded)
@@ -129,6 +133,7 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
   const roster: BoardPlayer[] = activePlayerIds
     .map((playerId) => ({
       playerId,
+      availability: String(sessionStatsByPlayerId.get(playerId)?.status ?? "active"),
       displayName: displayNameFor(playerId, sessionStatsByPlayerId.get(playerId)?.displayName, playerNameById),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -170,6 +175,8 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     const sp = m.scorePayload ?? null;
     return {
       matchId: doc.id,
+      roundNumber: typeof m.roundNumber === "number" ? m.roundNumber : 0,
+      matchNumber: typeof m.matchNumber === "number" ? m.matchNumber : 0,
       courtId: m.courtId,
       courtName: m.courtName ?? courtNameById.get(m.courtId) ?? m.courtId,
       status: m.status as string,
@@ -187,6 +194,7 @@ export async function getBoardData(boardCode: string): Promise<ActionResult<Boar
     sport: session.sport,
     scoringMode,
     sessionStatus: session.status,
+    sessionFormat: session.sessionFormat ?? "social",
     courts,
     roster,
     matches,

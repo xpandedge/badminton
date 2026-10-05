@@ -142,7 +142,9 @@ export default function BoardPage({ params }: { params: Promise<{ code: string }
                 {data.sessionName}
               </h1>
               <p style={{ color: "rgba(246,248,244,0.62)", fontSize: "0.875rem", marginTop: "0.4rem" }}>
-                Follow the courts and your place in the session.
+                Follow the courts and your place in the session. {" "}
+                <a href={`/board/${encodeURIComponent(code)}/tv`} style={{ color: "var(--volt-500)", textDecoration: "underline" }}>Show on TV</a>
+                {" · "}<a href={`/board/${encodeURIComponent(code)}/connect`} style={{ color: "var(--volt-500)", textDecoration: "underline" }}>Connect a TV</a>
               </p>
             </div>
             <span style={{ display: "inline-flex", flexShrink: 0, padding: "4px 10px", borderRadius: "var(--r-pill)", background: isLive ? "var(--volt-500)" : "rgba(246,248,244,0.12)", color: isLive ? "var(--ink-800)" : "var(--n-50)", fontFamily: "var(--font-mono)", fontSize: "0.625rem", fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase" }}>

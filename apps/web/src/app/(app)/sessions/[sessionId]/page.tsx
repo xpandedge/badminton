@@ -90,31 +90,31 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const [rsvpRoster, setRsvpRoster] = useState<SessionRsvpAdminRoster | null>(null);
   const [rsvpRosterError, setRsvpRosterError] = useState<string | null>(null);
   const [rsvpOverrideBusyId, setRsvpOverrideBusyId] = useState<string | null>(null);
+  const [rsvpCopied, setRsvpCopied] = useState(false);
+  const [isCreatingRsvpLink, setIsCreatingRsvpLink] = useState(false);
+  const [rsvpCreateError, setRsvpCreateError] = useState<string | null>(null);
   const [repeatOpen, setRepeatOpen] = useState(false);
   const [repeatName, setRepeatName] = useState("");
   const [repeatStartsAt, setRepeatStartsAt] = useState("");
   const [repeatSelectedIds, setRepeatSelectedIds] = useState<string[]>([]);
   const [repeatBusy, setRepeatBusy] = useState(false);
   const [repeatError, setRepeatError] = useState<string | null>(null);
-  const [rsvpCopied, setRsvpCopied] = useState(false);
-  const [isCreatingRsvpLink, setIsCreatingRsvpLink] = useState(false);
-  const [rsvpCreateError, setRsvpCreateError] = useState<string | null>(null);
 
   // Add court state
   const [addCourtName, setAddCourtName] = useState("");
   const [addCourtLoading, setAddCourtLoading] = useState(false);
-  const router = useRouter();
   const [addCourtError, setAddCourtError] = useState<string | null>(null);
 
   const { user: currentUser } = useAuth();
+  const router = useRouter();
   const role = useGroupRole(session?.groupId ?? null);
   const canManage = canManageSessionPlayers(role);
   const guestGenderRequired = requiresGuestGenderForSocialPlayMode(session?.socialPlayMode);
   const canAddGuest = !!guestName.trim() && (!guestGenderRequired || !!guestGender) && !isAddingGuest;
-  const repeatablePlayers = activePlayers.filter((p) => p.participantType === "registered_user");
   const isGroupMember = role !== null;
 
   const activePlayers = players.filter((p) => p.status !== "removed" && p.status !== "left");
+  const repeatablePlayers = activePlayers.filter((p) => p.participantType === "registered_user");
   // Match by both playerId (uid) and also by the group player doc ID for cases where they differ
   const activePlayerIds = new Set(activePlayers.map((p) => p.playerId));
   const currentUserInSession = currentUser ? activePlayerIds.has(currentUser.uid) : false;
@@ -173,6 +173,9 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
       setAddError("Failed to add player. Try again.");
     } finally {
       setAddingId(null);
+    }
+  };
+
   const openRepeat = () => {
     if (!session) return;
     const sourceDate = new Date(toInputDateTime(session.startsAt) || Date.now());
@@ -201,9 +204,6 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
       return;
     }
     router.push(`/sessions/${result.data.sessionId}`);
-  };
-
-    }
   };
 
   const handleAddAllToSession = async () => {
@@ -247,14 +247,23 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
   const handleAddBulkGuests = async () => {
     const names = bulkGuestNames.split(/[\n,]+/).map((name) => name.trim()).filter(Boolean);
     if (!names.length || (guestGenderRequired && !guestGender) || isAddingBulkGuests) return;
-    setIsAddingBulkGuests(true); setGuestError(null);
+    setIsAddingBulkGuests(true);
+    setGuestError(null);
     try {
-      const results = await Promise.allSettled(names.map((displayName) => addGuestPlayerToSession({ sessionId, displayName, gender: guestGender || undefined, skillLevel: guestSkill })));
+      const results = await Promise.allSettled(names.map((displayName) => addGuestPlayerToSession({
+        sessionId,
+        displayName,
+        gender: guestGender || undefined,
+        skillLevel: guestSkill,
+      })));
       const failed = results.filter((result) => result.status === "rejected").length;
       if (failed) setGuestError(`${failed} player${failed === 1 ? "" : "s"} could not be added.`);
       if (failed < names.length) await refreshRsvpRoster();
-      setBulkGuestNames(""); setShowBulkGuests(false);
-    } finally { setIsAddingBulkGuests(false); }
+      setBulkGuestNames("");
+      setShowBulkGuests(false);
+    } finally {
+      setIsAddingBulkGuests(false);
+    }
   };
 
   const handleSaveRsvpCapacity = async (event: React.FormEvent) => {
@@ -512,6 +521,22 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   onClick={() => handleAddToSession(currentUser.uid)}
                   style={{
                     height: 48,
+                    padding: "0 1rem",
+                    borderRadius: "var(--r-lg)",
+                    background: "rgba(198,241,53,0.18)",
+                    border: "2px solid var(--volt-500)",
+                    color: "var(--volt-500)",
+                    fontWeight: 900,
+                    cursor: addingId === currentUser.uid ? "wait" : "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    fontSize: "0.9375rem",
+                  }}
+                >
+                  {addingId === currentUser.uid ? "Joining…" : "Join Session"}
+                </button>
+              )}
               {canManage && session.status === "completed" && (
                 <button
                   type="button"
@@ -531,28 +556,10 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                   Run this session again
                 </button>
               )}
-                    padding: "0 1rem",
-                    borderRadius: "var(--r-lg)",
-                    background: "rgba(198,241,53,0.18)",
-                    border: "2px solid var(--volt-500)",
-                    color: "var(--volt-500)",
-                    fontWeight: 900,
-                    cursor: addingId === currentUser.uid ? "wait" : "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.5rem",
-                    fontSize: "0.9375rem",
-                  }}
-                >
-                  {addingId === currentUser.uid ? "Joining…" : "Join Session"}
-                </button>
-              )}
               <div style={{ display: "grid", gap: "0.35rem", justifyItems: "end" }}>
                 {session.scoreCode && (
                   <a
                     href={`/board/${encodeURIComponent(session.scoreCode)}/connect`}
-                    target="_blank"
-                    rel="noopener noreferrer"
                     style={{
                       height: 48,
                       padding: "0 1rem",
@@ -624,6 +631,24 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
                 <div style={{
                   fontFamily: "var(--font-display-tight)",
                   fontSize: typeof stat.value === "number" ? "2rem" : "1rem",
+                  fontWeight: 900,
+                  color: "var(--volt-500)",
+                  lineHeight: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}>
+                  {statValue(stat.value)}
+                </div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 6 }}>
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {repeatOpen && (
         <div
           role="presentation"
@@ -702,24 +727,6 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
           </form>
         </div>
       )}
-
-                  fontWeight: 900,
-                  color: "var(--volt-500)",
-                  lineHeight: 1,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}>
-                  {statValue(stat.value)}
-                </div>
-                <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.625rem", color: "rgba(246,248,244,0.55)", letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 6 }}>
-                  {stat.label}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* Court booking — links out to venue booking pages */}
       {isGroupMember && (
@@ -1179,7 +1186,7 @@ export default function SessionDetailPage({ params }: { params: Promise<{ sessio
               <input
                 className="pb-input"
                 type="text"
-                placeholder="Number or name…"
+                placeholder={`Court ${activeCourts.length + 1} name…`}
                 value={addCourtName}
                 onChange={(e) => setAddCourtName(e.target.value)}
                 style={{ flex: 1, height: 38, borderRadius: "var(--r-md)", fontSize: "0.875rem" }}

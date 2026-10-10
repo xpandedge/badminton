@@ -434,6 +434,65 @@ export async function updateSessionStatus(
   return ok(undefined);
 }
 
+export async function startScheduledMatch(
+  sessionId: string,
+  matchId: string,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!sessionId || !matchId) return err("INVALID_ARGUMENT", "sessionId and matchId are required");
+
+  const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const matchRef = db.doc(`sessions/${sessionId}/matches/${matchId}`);
+      const [sessionSnap, matchSnap] = await Promise.all([t.get(sessionRef), t.get(matchRef)]);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+      if (!matchSnap.exists) throw Object.assign(new Error("Match not found"), { code: "NOT_FOUND" });
+
+      const data = sessionSnap.data()!;
+      const memberSnap = await t.get(db.doc(`groups/${data.groupId}/members/${session.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }).role ?? null : null;
+      if (!canCreateSession(role)) {
+        throw Object.assign(new Error("Only group owners and admins can run sessions"), { code: "FORBIDDEN" });
+      }
+      if (data.status !== "active" && data.status !== "paused") {
+        throw Object.assign(new Error("A match can only be started while the session is live"), { code: "FAILED_PRECONDITION" });
+      }
+
+      const match = matchSnap.data()!;
+      if (match.sessionId !== sessionId) {
+        throw Object.assign(new Error("Match does not belong to this session"), { code: "FAILED_PRECONDITION" });
+      }
+      if (match.status !== "scheduled" || match.isLocked) {
+        throw Object.assign(new Error("Only an unlocked scheduled match can be started"), { code: "FAILED_PRECONDITION" });
+      }
+
+      t.update(matchRef, {
+        status: "in_progress",
+        startedAt: FieldValue.serverTimestamp(),
+      });
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: session.uid,
+        action: "match/started",
+        details: { matchId },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
+    throw e;
+  }
+
+  return ok(undefined);
+}
+
 export interface SessionSummaryData {
   id: string;
   scoreCode?: string;

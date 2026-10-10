@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, generateRoundRobinSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession, permanentlyDeleteSession } from "@/lib/sessions/live";
+import { generateSchedule, generateRoundRobinSchedule, startSession, startScheduledMatch, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession, permanentlyDeleteSession } from "@/lib/sessions/live";
 import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured, addGuestPlayerToSession } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
@@ -92,6 +92,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [disablingCourtId, setDisablingCourtId] = useState<string | null>(null);
   const [swappingPlayerKey, setSwappingPlayerKey] = useState<string | null>(null);
   const [startingCourtId, setStartingCourtId] = useState<string | null>(null);
+  const [startingMatchId, setStartingMatchId] = useState<string | null>(null);
   const [isSelfJoining, setIsSelfJoining] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
@@ -597,13 +598,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     roundRobinPairs.some((pair) => pair.id !== pairId && (pair.playerAId === playerId || pair.playerBId === playerId));
 
   const scheduledMatches = matches.filter((m) => m.status === "scheduled");
-  const roundRobinScheduledRounds = scheduledMatches.map((match) => Number(match.roundNumber ?? 0)).filter((round) => round > 0);
-  const nextRoundRobinRound = isRoundRobinSession && roundRobinScheduledRounds.length > 0
-    ? Math.min(...roundRobinScheduledRounds)
+  const currentMatches = matches.filter((m) => m.status === "scheduled" || m.status === "in_progress");
+  const roundRobinCurrentRounds = currentMatches.map((match) => Number(match.roundNumber ?? 0)).filter((round) => round > 0);
+  const nextRoundRobinRound = isRoundRobinSession && roundRobinCurrentRounds.length > 0
+    ? Math.min(...roundRobinCurrentRounds)
     : null;
   const currentScheduledMatches = nextRoundRobinRound
-    ? scheduledMatches.filter((match) => Number(match.roundNumber ?? 0) === nextRoundRobinRound)
-    : scheduledMatches;
+    ? currentMatches.filter((match) => Number(match.roundNumber ?? 0) === nextRoundRobinRound)
+    : currentMatches;
   const scheduledByCourtId = new Map(currentScheduledMatches.map((m) => [m.courtId, m]));
   const doneMatches = matches.filter((m) => m.status === "completed").sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0));
   const lockedMatches = matches.filter((match) => match.status === "completed" || match.status === "cancelled" || match.isLocked).length;
@@ -647,6 +649,15 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     try { await handleRebalance("manual_rebalance", courtId); }
     catch (e: any) { setActionError(e.message); }
     finally { setStartingCourtId(null); }
+  };
+
+  const handleStartMatch = async (matchId: string) => {
+    if (startingMatchId) return;
+    setStartingMatchId(matchId);
+    setActionError(null);
+    try { await startScheduledMatch({ sessionId, matchId }); }
+    catch (e: any) { setActionError(e.message); }
+    finally { setStartingMatchId(null); }
   };
 
   const handleCompleteSession = async () => {
@@ -728,6 +739,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
 
   function renderMatchCard(m: any) {
     const isLocked = m.status === "completed" || m.status === "cancelled" || m.isLocked;
+    const isManualWaiting = session!.manualCourtProgression === true && m.status === "scheduled" && !isLocked;
     const isScoring = scoringMatchIds.has(m.id);
     const isEditing = editingScoreMatchIds.has(m.id);
     const canEditScore = !isNoScoringSession && m.status === "completed" && canCorrectCompletedScore(role, session!.status);
@@ -854,7 +866,19 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </button>
         )}
 
-        {canScore && (!isLocked || isEditing) && (() => {
+        {isManualWaiting && canManageLive && (
+          <button
+            type="button"
+            data-testid="start-game-btn"
+            disabled={startingMatchId !== null}
+            onClick={() => handleStartMatch(m.id)}
+            style={{ ...primaryActionStyle, width: "100%", opacity: startingMatchId === m.id ? 0.65 : 1 }}
+          >
+            {startingMatchId === m.id ? "Starting…" : "Start game"}
+          </button>
+        )}
+
+        {!isManualWaiting && canScore && (!isLocked || isEditing) && (() => {
           const pts = pointInputs[m.id];
           const a = pts?.a ? Number(pts.a) : undefined;
           const b = pts?.b ? Number(pts.b) : undefined;

@@ -5,7 +5,7 @@ import { logEvent } from "@/lib/analytics/events";
 import { watchWithFallback } from "@/lib/realtime/watchWithFallback";
 import { generateSchedule as serverGenerateSchedule } from "@/server/sessions/generate";
 import { generateRoundRobinSchedule as serverGenerateRoundRobinSchedule, type RoundRobinTeamInput } from "@/server/sessions/round-robin";
-import { updateSessionStatus, deleteSession as serverDeleteSession, permanentlyDeleteSession as serverPermanentlyDeleteSession } from "@/server/sessions/actions";
+import { updateSessionStatus, startScheduledMatch as serverStartScheduledMatch, deleteSession as serverDeleteSession, permanentlyDeleteSession as serverPermanentlyDeleteSession } from "@/server/sessions/actions";
 
 export async function deleteSession(data: { sessionId: string }) {
   const result = await serverDeleteSession(data.sessionId);
@@ -37,6 +37,12 @@ export async function startSession(data: { sessionId: string }) {
   const result = await updateSessionStatus(data.sessionId, "active");
   if (!result.ok) throw new Error(result.message);
   void logEvent("session_started", { sessionId: data.sessionId });
+  return { data: result.data };
+}
+
+export async function startScheduledMatch(data: { sessionId: string; matchId: string }) {
+  const result = await serverStartScheduledMatch(data.sessionId, data.matchId);
+  if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }
 

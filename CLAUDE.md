@@ -87,3 +87,11 @@ pnpm --filter @picklebaddies/web test:rules    # wraps vitest in `firebase emula
 - New Firestore/Auth **client** access goes in `apps/web/src/lib/**`, not in components. **Server-side** Firestore mutations go in `apps/web/src/server/**` using firebase-admin.
 - Commit messages end with the `Co-Authored-By: Claude Opus 4.8` trailer (see existing history). Don't push unless asked.
 - Server env vars needed by `apps/web/src/server/**`: `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, `FIREBASE_ADMIN_PRIVATE_KEY`. Set `FIRESTORE_EMULATOR_HOST` + `FIREBASE_AUTH_EMULATOR_HOST` for local emulator use (see `apps/web/.env.local`).
+
+## AI release safety
+
+- Never deploy from a dirty worktree. Never reset, clean or delete uncommitted work to make a release pass.
+- Feature work starts in an isolated worktree from `origin/main`.
+- Production releases come from pushed `main` through the Git-connected deployment.
+- Run `pwsh -File scripts/preflight-release.ps1` immediately before a release. It refuses dirty trees, non-main branches and commits that are not exactly on `origin/main`.
+- Follow `docs/RELEASE_WORKFLOW.md` for preservation, recovery and release evidence.

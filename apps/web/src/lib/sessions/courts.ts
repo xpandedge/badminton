@@ -14,5 +14,5 @@ export function changeCourts(courts: SessionCourt[], change: CourtChange, newId:
   if (others.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) throw new Error("A court with this name already exists");
   if (others.some(c => c.courtNumber === courtNumber)) throw new Error("A court with this number already exists");
   const updated = { courtId: existing?.courtId ?? newId, name, courtNumber: courtNumber!, isActive: change.isActive ?? existing?.isActive ?? true };
-  return existing ? courts.map(c => c.courtId === existing.courtId ? updated : c) : [...courts, updated];
+  return existing ? courts.map(c => c.courtId === existing.courtId ? updated : c) : [updated, ...courts];
 }

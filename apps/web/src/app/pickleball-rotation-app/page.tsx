@@ -123,7 +123,7 @@ export default function PickleballRotationPage() {
       <section className="pb-public-section pb-public-two-up" aria-labelledby="pickleball-keywords">
         <div>
           <span className="pb-mono-label">Use cases</span>
-          <h2 id="pickleball-keywords">For open play, social ladders, and regular pickleball groups.</h2>
+          <h2 id="pickleball-keywords">For open play, social sessions, and regular pickleball groups.</h2>
         </div>
         <p>
           DuoRally is a practical option for organisers searching for a pickleball rotation app, pickleball player

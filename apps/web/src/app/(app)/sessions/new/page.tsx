@@ -23,7 +23,7 @@ export default function NewSessionPage() {
   const [provisioningSquad, setProvisioningSquad] = useState(false);
   const hasAutoProvisioned = useRef(false);
   const [venueName, setVenueName] = useState("");
-  const [courtsText, setCourtsText] = useState("Court 1\nCourt 2");
+  const [courtsText, setCourtsText] = useState("1\n2");
 
   const [name, setName] = useState("");
   const [sport, setSport] = useState<Sport>("pickleball");
@@ -32,6 +32,8 @@ export default function NewSessionPage() {
   const [scoringMode, setScoringMode] = useState<ScoringMode>("points");
   const [sessionFormat, setSessionFormat] = useState<"social_rotation" | "fixed_pair_round_robin">("social_rotation");
   const [socialPlayMode, setSocialPlayMode] = useState<SocialPlayMode>("random");
+  const [manualPlayerAssignment, setManualPlayerAssignment] = useState(true);
+  const [manualCourtProgression, setManualCourtProgression] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -84,7 +86,7 @@ export default function NewSessionPage() {
     if (!groupId || !selectedVenueId || selectedVenueId === "custom") return;
     return watchCourts(groupId, selectedVenueId, (courts) => {
       if (courts.length > 0) {
-        const courtList = courts.map((c: any) => c.name ?? `Court ${c.courtNumber ?? ""}`).filter(Boolean);
+        const courtList = courts.map((c: any) => (c.name ?? `${c.courtNumber ?? ""}`).replace(/^court\s+/i, "").trim()).filter(Boolean);
         if (courtList.length > 0) setCourtsText(courtList.join("\n"));
       }
     });
@@ -93,6 +95,7 @@ export default function NewSessionPage() {
   const courtNames = courtsText
     .split(/[\n,]+/)
     .map((n) => n.trim())
+    .map((n) => n.replace(/^court\s+/i, "").trim())
     .filter(Boolean);
 
   const selectedGroupName = groups.find((g) => g.id === groupId)?.name ?? "—";
@@ -120,6 +123,8 @@ export default function NewSessionPage() {
         socialPlayMode: sessionFormat === "social_rotation" ? socialPlayMode : undefined,
         venueName,
         startsAtIso: scheduledTime ? new Date(scheduledTime).toISOString() : undefined,
+        manualPlayerAssignment,
+        manualCourtProgression,
       });
       if (!result) throw new Error("No response from server — check admin SDK config");
       if (!result.ok) throw new Error(result.message);
@@ -276,7 +281,7 @@ export default function NewSessionPage() {
               value={courtsText}
               onChange={e => setCourtsText(e.target.value)}
               rows={3}
-              placeholder={"Court 1\nCourt 2"}
+              placeholder={"1\n2"}
               required
               style={{ resize: "vertical", lineHeight: 1.45 }}
             />
@@ -286,7 +291,7 @@ export default function NewSessionPage() {
                   padding: "3px 9px", borderRadius: "var(--r-pill)",
                   background: "var(--volt-500)", color: "var(--ink-800)",
                   fontSize: "0.6875rem", fontWeight: 800,
-                }}>{c}</span>
+                }}>Court {c}</span>
               ))}
             </div>
           </label>
@@ -446,6 +451,18 @@ export default function NewSessionPage() {
               <option value="winner_only">Win / Loss only</option>
               <option value="no_scoring">No scoring — finish games only</option>
             </select>
+          </label>
+        </section>
+
+        <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1.125rem", display: "grid", gap: "0.75rem" }}>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.5625rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-3)" }}>Game flow</div>
+          <label style={{ display: "flex", gap: "0.65rem", alignItems: "flex-start" }}>
+            <input type="checkbox" checked={manualPlayerAssignment} onChange={e => setManualPlayerAssignment(e.target.checked)} />
+            <span><strong>Allow player swaps during live games</strong><br /><small style={{ color: "var(--text-3)" }}>Swap players between courts or with someone waiting.</small></span>
+          </label>
+          <label style={{ display: "flex", gap: "0.65rem", alignItems: "flex-start" }}>
+            <input type="checkbox" checked={manualCourtProgression} onChange={e => setManualCourtProgression(e.target.checked)} />
+            <span><strong>Ask before starting the next game</strong><br /><small style={{ color: "var(--text-3)" }}>Finished courts wait until you choose the next players.</small></span>
           </label>
         </section>
 

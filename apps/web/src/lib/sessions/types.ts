@@ -40,6 +40,8 @@ export interface Session {
   };
   /** Read-only public player board (see-your-matches). Absent = enabled (legacy sessions). */
   boardEnabled?: boolean;
+  manualPlayerAssignment?: boolean;
+  manualCourtProgression?: boolean;
 }
 
 export interface SessionPlayer {

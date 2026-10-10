@@ -1,10 +1,7 @@
 import { redirect } from "next/navigation";
 import {
   getPublicRsvpRoster,
-  joinKnownPlayerRsvp,
   joinPublicCasualRsvp,
-  removeKnownPlayerRsvp,
-  removePublicCasualRsvp,
 } from "@/server/sessions/rsvp-public";
 import { RsvpSubmitButton } from "./submit-button";
 
@@ -44,29 +41,6 @@ export default async function PublicRsvpPage({
       redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?error=${encodeURIComponent(actionResult.message)}`);
     }
     redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?message=${encodeURIComponent("You are on the casual list.")}`);
-  }
-
-  async function knownPlayerAction(formData: FormData) {
-    "use server";
-    const playerId = String(formData.get("playerId") ?? "");
-    const intent = String(formData.get("intent") ?? "join");
-    const actionResult = intent === "remove"
-      ? await removeKnownPlayerRsvp(rsvpCode, playerId)
-      : await joinKnownPlayerRsvp(rsvpCode, playerId);
-    if (!actionResult.ok) {
-      redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?error=${encodeURIComponent(actionResult.message)}`);
-    }
-    redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?message=${encodeURIComponent("Your RSVP is updated.")}`);
-  }
-
-  async function removeAction(formData: FormData) {
-    "use server";
-    const name = String(formData.get("displayName") ?? "");
-    const actionResult = await removePublicCasualRsvp(rsvpCode, name);
-    if (!actionResult.ok) {
-      redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?error=${encodeURIComponent(actionResult.message)}`);
-    }
-    redirect(`/rsvp/${encodeURIComponent(rsvpCode)}?message=${encodeURIComponent("Your name was removed.")}`);
   }
 
   if (!result.ok) {
@@ -151,31 +125,9 @@ export default async function PublicRsvpPage({
         <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1rem", boxShadow: "var(--shadow-sm)" }}>
           <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.35rem", fontWeight: 900 }}>RSVP</h2>
           <p style={{ color: "var(--text-3)", fontSize: "0.875rem", marginTop: "0.2rem" }}>
-            Find your name to update this session. Guests can add a session-only name below.
+            Add your RSVP below. To remove yourself later, please contact the organiser directly.
           </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: "0.75rem", marginTop: "0.875rem" }}>
-            <form action={knownPlayerAction} style={{ display: "grid", gap: "0.5rem" }}>
-              <label style={{ color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 900 }}>
-                Signed-up players
-              </label>
-              <select className="pb-input" name="playerId" required defaultValue="" style={{ marginTop: 0 }}>
-                <option value="" disabled>Find your name</option>
-                {roster.knownPlayerOptions.map((player) => (
-                  <option key={player.playerId} value={player.playerId}>{player.displayName}</option>
-                ))}
-              </select>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
-                <RsvpSubmitButton name="intent" value="join" disabled={roster.knownPlayerOptions.length === 0} pendingLabel="Updating..." style={{ minHeight: 44, border: "none", borderRadius: "var(--r-md)", background: "var(--volt-500)", color: "var(--ink-800)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
-                  I'm coming
-                </RsvpSubmitButton>
-                <RsvpSubmitButton name="intent" value="remove" disabled={roster.knownPlayerOptions.length === 0} pendingLabel="Updating..." style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: roster.knownPlayerOptions.length === 0 ? "default" : "pointer", opacity: roster.knownPlayerOptions.length === 0 ? 0.55 : 1 }}>
-                  I'm away
-                </RsvpSubmitButton>
-              </div>
-              <p style={{ color: "var(--text-3)", fontSize: "0.75rem", fontWeight: 800 }}>
-                Uses your existing player profile. Regulars can opt out here.
-              </p>
-            </form>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: "0.75rem", marginTop: "0.875rem" }}>
             <div style={{ display: "grid", gap: "0.5rem" }}>
               <form action={joinAction} style={{ display: "grid", gap: "0.5rem" }}>
                 <label style={{ color: "var(--text-2)", fontSize: "0.8125rem", fontWeight: 900 }}>
@@ -186,12 +138,9 @@ export default async function PublicRsvpPage({
                   Add guest for this session
                 </RsvpSubmitButton>
               </form>
-              <form action={removeAction} style={{ display: "grid", gap: "0.5rem" }}>
-                <input className="pb-input" name="displayName" placeholder="Guest name to remove" required minLength={2} style={{ marginTop: 0 }} />
-                <RsvpSubmitButton pendingLabel="Removing..." style={{ minHeight: 44, border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface-sunken)", color: "var(--text-1)", fontWeight: 900, cursor: "pointer" }}>
-                  Remove guest name
-                </RsvpSubmitButton>
-              </form>
+              <p style={{ color: "var(--text-3)", fontSize: "0.8125rem", fontWeight: 800, margin: 0 }}>
+                To remove a guest RSVP, contact the organiser directly.
+              </p>
               <a href="/dashboard" style={{ color: "var(--emerald-600)", fontSize: "0.8125rem", fontWeight: 900 }}>
                 Want to be remembered next time? Join the squad.
               </a>

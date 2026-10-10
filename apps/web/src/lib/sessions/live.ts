@@ -5,10 +5,16 @@ import { logEvent } from "@/lib/analytics/events";
 import { watchWithFallback } from "@/lib/realtime/watchWithFallback";
 import { generateSchedule as serverGenerateSchedule } from "@/server/sessions/generate";
 import { generateRoundRobinSchedule as serverGenerateRoundRobinSchedule, type RoundRobinTeamInput } from "@/server/sessions/round-robin";
-import { updateSessionStatus, deleteSession as serverDeleteSession } from "@/server/sessions/actions";
+import { updateSessionStatus, deleteSession as serverDeleteSession, permanentlyDeleteSession as serverPermanentlyDeleteSession } from "@/server/sessions/actions";
 
 export async function deleteSession(data: { sessionId: string }) {
   const result = await serverDeleteSession(data.sessionId);
+  if (!result.ok) throw new Error(result.message);
+  return { data: result.data };
+}
+
+export async function permanentlyDeleteSession(data: { sessionId: string }) {
+  const result = await serverPermanentlyDeleteSession(data.sessionId);
   if (!result.ok) throw new Error(result.message);
   return { data: result.data };
 }

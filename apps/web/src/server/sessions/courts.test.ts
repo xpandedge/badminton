@@ -39,7 +39,9 @@ describe("live court authorization and writes", () => {
   });
   it("updates counts and audit only, preserving all match records", async () => {
     h.role = "admin"; h.status = "paused";
-    expect(await saveLiveCourt("s", { name: "Court 2", courtNumber: 2 })).toMatchObject({ ok: true });
+    const result = await saveLiveCourt("s", { name: "Court 2", courtNumber: 2 });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) expect(result.data).toContainEqual({ courtId: "new", name: "Court 2", courtNumber: 2, isActive: true });
     expect(h.writes.map(w => w.path)).toEqual(["sessions/s", "sessions/s/auditLogs/audit"]);
     expect(h.writes[0]?.data.courtCount).toBe(1);
     expect(h.writes[0]?.data.courts).toHaveLength(2);

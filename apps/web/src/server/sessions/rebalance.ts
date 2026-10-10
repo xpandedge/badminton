@@ -25,6 +25,7 @@ export interface RebalanceResult {
 export async function rebalanceSession(
   sessionId: string,
   trigger: RebalanceTrigger = "manual_rebalance",
+  requestedCourtId?: string,
 ): Promise<ActionResult<RebalanceResult>> {
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
@@ -73,7 +74,7 @@ export async function rebalanceSession(
         scheduledMatches.flatMap((m) => [...(m.teamAIds ?? []), ...(m.teamBIds ?? [])] as string[]),
       );
       const idlePlayers = enginePlayers.filter((p) => !busyPlayerIds.has(p.playerId));
-      const idleCourts = engineCourts.filter((c) => !occupiedCourtIds.has(c.courtId));
+      const idleCourts = engineCourts.filter((c) => !occupiedCourtIds.has(c.courtId) && (!requestedCourtId || c.courtId === requestedCourtId));
       const state = buildEngineStateFromAssignments(enginePlayers, matches as any[], sitOuts);
       const order = seededOrder(idlePlayers.map((p) => p.playerId), DEFAULT_SEED);
       const cycle = session.nextCycleNumber || 2;

@@ -14,10 +14,11 @@ import {
   disableCourt as serverDisableCourt,
 } from "@/server/sessions/players";
 
-export async function rebalanceSession(data: { sessionId: string; trigger?: string }) {
+export async function rebalanceSession(data: { sessionId: string; trigger?: string; courtId?: string }) {
   const result = await serverRebalance(
     data.sessionId,
     (data.trigger as any) ?? "manual_rebalance",
+    data.courtId,
   );
   if (!result.ok) throw new Error(result.message);
   void logEvent("rebalance_triggered", { sessionId: data.sessionId, trigger: data.trigger });

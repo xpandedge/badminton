@@ -1,7 +1,7 @@
 import s from "./landing.module.css";
 
 const pains = [
-  ["01", "Who is next?", "The group chat fills up before the next game is even decided."],
+  ["01", "Who is next?", "The next game needs deciding before everyone can get back on court."],
   ["02", "Where is the plan?", "A clipboard can lose track of courts, sit-outs, and late arrivals."],
   ["03", "Is it fair?", "A good social night should give everyone a chance to play and reset."],
   ["04", "What was the score?", "Keep the fun part of the night without losing the games afterwards."],

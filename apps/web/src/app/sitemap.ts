@@ -5,6 +5,7 @@ const lastModified = new Date("2026-08-23T00:00:00+10:00");
 
 const routes = [
   { path: "/", priority: 1, changeFrequency: "weekly" },
+  { path: "/demo", priority: 0.8, changeFrequency: "monthly" },
   { path: "/racquet-sports-rotation-app", priority: 0.95, changeFrequency: "monthly" },
   { path: "/badminton-doubles-rotation-app", priority: 0.9, changeFrequency: "monthly" },
   { path: "/pickleball-rotation-app", priority: 0.9, changeFrequency: "monthly" },

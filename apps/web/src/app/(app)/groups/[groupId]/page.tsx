@@ -23,7 +23,7 @@ import { watchGroupPlayers } from "@/lib/players/players";
 import { watchCourts, watchVenues } from "@/lib/groups/venues";
 import { watchGroupSessions, type SessionSummary } from "@/lib/sessions/sessions";
 import { useAuth } from "@/lib/auth/useAuth";
-import { rsvpToSession, deleteSession, getGroupSessionsAction } from "@/server/sessions/actions";
+import { rsvpToSession, deleteSession, permanentlyDeleteSession, getGroupSessionsAction } from "@/server/sessions/actions";
 import { addMemberToSquad, addVenueToSquad, addCourtToSquadVenue, approveJoinRequest, rejectJoinRequest, archiveSquad, leaveSquad, restoreSquad, rotateInviteCode, removePlayerFromSquad, transferSquadOwnership, updateMemberRole, updateSquadPlayerKind, updateSquadRsvpDefaults } from "@/server/squads/actions";
 import { searchUsers, type UserSearchResult } from "@/server/users/actions";
 import { getFirestore, doc, getDoc } from "firebase/firestore";
@@ -366,6 +366,19 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
     const result = await deleteSession(sessionId).catch((error) => ({ ok: false as const, message: error.message }));
     if (result?.ok) notify(`${sessionName} was cancelled.`);
     else notify(result?.message ?? "Could not cancel this session.", "error");
+  };
+
+  const handlePermanentDeleteSession = async (sessionId: string, sessionName: string) => {
+    const confirmed = await requestConfirmation({
+      title: `Permanently delete ${sessionName}?`,
+      description: "This permanently deletes the session, players, matches, scores, RSVPs, and all other session data. This cannot be undone.",
+      confirmLabel: "Delete forever",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    const result = await permanentlyDeleteSession(sessionId).catch((error) => ({ ok: false as const, message: error.message }));
+    if (result?.ok) notify(`${sessionName} was permanently deleted.`);
+    else notify(result?.message ?? "Could not permanently delete this session.", "error");
   };
 
   useEffect(() => {
@@ -1854,6 +1867,20 @@ export default function GroupDetailsPage({ params }: { params: Promise<{ groupId
                           >
                             Open
                           </a>
+                          {canAdminister && s.status === "completed" && (
+                            <button
+                              type="button"
+                              onClick={() => handlePermanentDeleteSession(s.id, s.name)}
+                              style={{
+                                height: 38, padding: "0 0.875rem", borderRadius: "var(--r-lg)",
+                                background: "transparent", color: "var(--danger)",
+                                border: "1px solid var(--danger)", fontWeight: 800,
+                                fontSize: "0.8125rem", cursor: "pointer", flexShrink: 0,
+                              }}
+                            >
+                              Delete permanently
+                            </button>
+                          )}
                           <a
                             href={`/sessions/${s.id}/live`}
                             onClick={(event) => {

@@ -9,7 +9,7 @@ describe("live court changes", () => {
   it("adds an active court without enabling other courts", () => {
     const result = changeCourts(courts, { name: "Court 3", courtNumber: 3 }, "c");
     expect(result.filter(c => c.isActive)).toHaveLength(2);
-    expect(result[2]?.courtId).toBe("c");
+    expect(result[0]?.courtId).toBe("c");
     expect(courts).toHaveLength(2);
   });
   it("renames and renumbers while preserving identity and availability", () => {

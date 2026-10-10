@@ -536,7 +536,7 @@ export async function swapPlayers(
         throw Object.assign(new Error("Replacement player is already in this match"), { code: "FAILED_PRECONDITION" });
       }
 
-      const replacementIsOnAnotherCourt = matchesSnap.docs.some((doc) => {
+      const replacementMatchDoc = matchesSnap.docs.find((doc) => {
         if (doc.id === matchId) return false;
         const otherMatch = doc.data();
         if (otherMatch.status !== "scheduled" || otherMatch.isLocked) return false;
@@ -546,8 +546,8 @@ export async function swapPlayers(
         ];
         return otherIds.includes(inPlayerId);
       });
-      if (replacementIsOnAnotherCourt) {
-        throw Object.assign(new Error("Replacement player is already assigned to another current court"), { code: "FAILED_PRECONDITION" });
+      if (session.manualPlayerAssignment === false) {
+        throw Object.assign(new Error("Player swaps are disabled for this session"), { code: "FAILED_PRECONDITION" });
       }
 
       const swap = (p: { playerId: string; displayName: string }) =>
@@ -561,6 +561,22 @@ export async function swapPlayers(
         teamAIds: newTeamA.map((p) => p.playerId),
         teamBIds: newTeamB.map((p) => p.playerId),
       });
+
+      if (replacementMatchDoc) {
+        const other = replacementMatchDoc.data();
+        const outgoingPlayer = [...(match.teamA as any[]), ...(match.teamB as any[])].find((p) => p.playerId === outPlayerId);
+        const replaceOnOther = (p: { playerId: string; displayName: string }) => p.playerId === inPlayerId
+          ? { playerId: outPlayerId, displayName: outgoingPlayer?.displayName ?? "Player" }
+          : p;
+        const otherTeamA = (other.teamA as Array<{ playerId: string; displayName: string }>).map(replaceOnOther);
+        const otherTeamB = (other.teamB as Array<{ playerId: string; displayName: string }>).map(replaceOnOther);
+        t.update(replacementMatchDoc.ref, {
+          teamA: otherTeamA,
+          teamB: otherTeamB,
+          teamAIds: otherTeamA.map((p) => p.playerId),
+          teamBIds: otherTeamB.map((p) => p.playerId),
+        });
+      }
 
       // A generated sit-out represents who was excluded from this assignment
       // cycle. When that player is manually put on court, transfer the record

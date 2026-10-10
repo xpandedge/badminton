@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -451,6 +451,9 @@ export default function DashboardPage() {
               const canRsvp = session.status === "scheduled" || session.status === "draft";
               const isRsvpBusy = rsvpLoading.has(session.id);
               const isCasual = session.myPlayerKind === "casual";
+              // Fix: regular members in scheduled/draft sessions previously showed "You're in by default"
+              // or "Away" as the card CTA — confusing text with no clear "open" affordance.
+              // Now always shows "Open session" for regular members in upcoming sessions.
               const actionLabel = session.role === "managing"
                 ? session.status === "active" || session.status === "paused"
                   ? "Run session"
@@ -463,7 +466,7 @@ export default function DashboardPage() {
                     ? session.myRsvpStatus === "going" ? "View my court" : "Open session"
                     : isCasual
                       ? session.myRsvpStatus === "going" ? "Interested" : "Show interest"
-                      : session.myRsvpStatus === "not_going" ? "Away" : "You're in by default";
+                      : "Open session";
 
               return (
                 <div key={session.id} data-testid="session-list-item" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", boxShadow: "var(--shadow-sm)", overflow: "hidden", animation: `pb-rise 400ms ${140 + i * 30}ms var(--ease-out) both` }}>
@@ -479,6 +482,29 @@ export default function DashboardPage() {
                     </div>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
                   </Link>
+
+                  {session.role === "managing" && session.scoreCode && (
+                    <div style={{ borderTop: "1px solid var(--border)", padding: "0.625rem 1rem" }}>
+                      <Link
+                        href={`/board/${encodeURIComponent(session.scoreCode)}/connect`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          ...utilityLinkStyle,
+                          width: "100%",
+                          borderColor: "var(--volt-500)",
+                          background: "rgba(198,241,53,0.14)",
+                          color: "var(--ink-800)",
+                          fontFamily: "inherit",
+                          fontSize: "0.8125rem",
+                          letterSpacing: "normal",
+                          textTransform: "none",
+                        }}
+                      >
+                        Connect a TV
+                      </Link>
+                    </div>
+                  )}
 
                   {canRsvp && (
                     <div style={{ borderTop: "1px solid var(--border)", padding: "0.75rem 1rem", display: "grid", gap: "0.5rem" }}>

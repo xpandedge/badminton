@@ -201,6 +201,7 @@ export async function readAutoFillInputs(
     t.get(db.collection(`sessions/${sessionId}/players`)),
   ]);
   const session = sessionSnap.data()!;
+  if (session.manualCourtProgression === true) return null;
 
   const matches = matchesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const otherScheduled = matches.filter((m: any) => m.id !== completingMatchId && m.status === "scheduled");

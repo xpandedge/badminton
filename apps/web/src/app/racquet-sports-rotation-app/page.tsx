@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   },
 };
 
-const sports = ["Tennis", "Badminton", "Pickleball", "Squash", "Table tennis", "Padel", "Social groups"];
+const sports = ["Tennis", "Badminton", "Pickleball", "Squash", "Table tennis"];
 
 const features = [
   {
@@ -41,7 +41,7 @@ const faqJsonLd = {
       name: "What sports can DuoRally help organise?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "DuoRally helps social racquet and court sport groups organise player rotations for sports such as tennis, badminton, pickleball, squash, table tennis, padel, and similar group-play sessions.",
+        text: "DuoRally helps social racquet and court sport groups organise player rotations for sports such as tennis, badminton, pickleball, squash, table tennis, and similar group-play sessions.",
       },
     },
     {

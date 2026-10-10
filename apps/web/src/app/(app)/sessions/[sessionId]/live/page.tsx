@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, generateRoundRobinSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession } from "@/lib/sessions/live";
+import { generateSchedule, generateRoundRobinSchedule, startSession, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession, permanentlyDeleteSession } from "@/lib/sessions/live";
 import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured, addGuestPlayerToSession } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
@@ -76,8 +76,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [actionError, setActionError] = useState<string | null>(null);
   const [roundRobinPairs, setRoundRobinPairs] = useState<RoundRobinPairDraft[]>(() => [createRoundRobinPairDraft(1)]);
 
-  const [rebalanceSummary, setRebalanceSummary] = useState<string | null>(null);
-  const [showSummaryModal, setShowSummaryModal] = useState(false);
   const [showBoardModal, setShowBoardModal] = useState(false);
   const [boardCopied, setBoardCopied] = useState(false);
   const [rsvpCopied, setRsvpCopied] = useState(false);
@@ -93,12 +91,16 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [isRebalancing, setIsRebalancing] = useState(false);
   const [disablingCourtId, setDisablingCourtId] = useState<string | null>(null);
   const [swappingPlayerKey, setSwappingPlayerKey] = useState<string | null>(null);
+  const [startingCourtId, setStartingCourtId] = useState<string | null>(null);
   const [isSelfJoining, setIsSelfJoining] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
   const [sessionGuestGender, setSessionGuestGender] = useState<PlayerGender | "">("");
   const [sessionGuestSkill, setSessionGuestSkill] = useState("unknown");
   const [isAddingSessionGuest, setIsAddingSessionGuest] = useState(false);
+  const [showBulkGuests, setShowBulkGuests] = useState(false);
+  const [bulkGuestNames, setBulkGuestNames] = useState("");
+  const [isAddingBulkGuests, setIsAddingBulkGuests] = useState(false);
 
   const [engineState, setEngineState] = useState<any | null>(null);
   const [pointInputs, setPointInputs] = useState<Record<string, { a: string; b: string }>>({});
@@ -294,15 +296,12 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     finally { setIsStartingSession(false); }
   };
 
-  const handleRebalance = async (trigger?: string) => {
+  const handleRebalance = async (trigger?: string, courtId?: string) => {
     if (isRebalancing) return;
     setIsRebalancing(true);
     setActionError(null);
     try {
-      const res = await rebalanceSession({ sessionId, trigger });
-      const data = res.data;
-      setRebalanceSummary(data.summary);
-      setShowSummaryModal(true);
+      await rebalanceSession({ sessionId, trigger, courtId });
     } catch (e: any) { setActionError(e.message); }
     finally { setIsRebalancing(false); }
   };
@@ -315,14 +314,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       const res = await updatePlayerStatus({ sessionId, sessionPlayerId, status });
       const data = res.data;
       if (data.rebalanceRecommended) {
-        const confirmed = await requestConfirmation({
-          title: "Update the next games?",
-          description: "Current games and completed scores will stay put. New games will use the updated player list.",
-          confirmLabel: "Update games",
-        });
-        if (confirmed) {
-          await handleRebalance(status === "left" || status === "removed" || status === "no_show" ? "player_removed" : "settings_changed");
-        }
+        await handleRebalance(status === "left" || status === "removed" || status === "no_show" ? "player_removed" : "settings_changed");
       }
     } catch (e: any) { setActionError(e.message); }
     finally { setPlayerActionBusyId(null); }
@@ -364,7 +356,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const handleAddSessionGuest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canAddSessionGuest) return;
-    const addedGuestName = sessionGuestName.trim();
     setIsAddingSessionGuest(true);
     setActionError(null);
     try {
@@ -378,17 +369,22 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       setSessionGuestGender("");
       setSessionGuestSkill("unknown");
       if (!isRoundRobinSession && res.data.rebalanceRecommended) {
-        const confirmed = await requestConfirmation({
-          title: `Add ${addedGuestName} to the next games?`,
-          description: "Current games will stay put. New games will include the updated player list.",
-          confirmLabel: "Update games",
-        });
-        if (confirmed) {
-          await handleRebalance("player_added");
-        }
+        await handleRebalance("player_added");
       }
     } catch (err: any) { setActionError(err.message); }
     finally { setIsAddingSessionGuest(false); }
+  };
+
+  const handleAddBulkGuests = async () => {
+    const names = bulkGuestNames.split(/[\n,]+/).map((name) => name.trim()).filter(Boolean);
+    if (!names.length || (sessionGuestGenderRequired && !sessionGuestGender) || isAddingBulkGuests) return;
+    setIsAddingBulkGuests(true); setActionError(null);
+    try {
+      const results = await Promise.allSettled(names.map((displayName) => addGuestPlayerToSession({ sessionId, displayName, gender: sessionGuestGender || undefined, skillLevel: sessionGuestSkill })));
+      const failed = results.filter((result) => result.status === "rejected").length;
+      if (failed) setActionError(`${failed} player${failed === 1 ? "" : "s"} could not be added.`);
+      setBulkGuestNames(""); setShowBulkGuests(false);
+    } finally { setIsAddingBulkGuests(false); }
   };
 
   const handleDeleteSession = async () => {
@@ -409,6 +405,24 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     finally { setIsDeletingSession(false); }
   };
 
+  const handlePermanentDeleteSession = async () => {
+    if (isDeletingSession) return;
+    setIsDeletingSession(true);
+    try {
+      const confirmed = await requestConfirmation({
+        title: `Permanently delete ${session.name}?`,
+        description: "This will permanently delete the session, players, matches, scores, RSVPs, audit logs, and all other session data. This cannot be undone.",
+        confirmLabel: "Delete forever",
+        tone: "danger",
+      });
+      if (!confirmed) return;
+      setActionError(null);
+      await permanentlyDeleteSession({ sessionId });
+      window.location.href = `/groups/${session.groupId}`;
+    } catch (err: any) { setActionError(err.message); }
+    finally { setIsDeletingSession(false); }
+  };
+
   const handleDisableCourt = async (courtId: string, courtName: string) => {
     if (disablingCourtId !== null) return;
     setDisablingCourtId(courtId);
@@ -423,14 +437,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
       setActionError(null);
       const res = await disableCourt({ sessionId, courtId });
       if (!isRoundRobinSession && (res.data as any).rebalanceRecommended) {
-        const updateGames = await requestConfirmation({
-          title: "Update the next games?",
-          description: "New games will be redistributed across the remaining courts.",
-          confirmLabel: "Update games",
-        });
-        if (updateGames) {
-          await handleRebalance("settings_changed");
-        }
+        await handleRebalance("settings_changed");
       }
     } catch (e: any) { setActionError(e.message); }
     finally { setDisablingCourtId(null); }
@@ -633,6 +640,15 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     finally { setIsSelfJoining(false); }
   };
 
+  const handleStartNextGame = async (courtId: string) => {
+    if (startingCourtId) return;
+    setStartingCourtId(courtId);
+    setActionError(null);
+    try { await handleRebalance("manual_rebalance", courtId); }
+    catch (e: any) { setActionError(e.message); }
+    finally { setStartingCourtId(null); }
+  };
+
   const handleCompleteSession = async () => {
     if (isCompletingSession) return;
     setIsCompletingSession(true);
@@ -726,14 +742,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     );
     const eligibleForSwap = players.filter(
       (p) => !inMatch.has(p.playerId)
-        && !assignedToAnotherCourt.has(p.playerId)
+        && (session?.manualPlayerAssignment !== false || !assignedToAnotherCourt.has(p.playerId))
         && (p.status === "active" || p.status === "checked_in")
     );
     const renderSwap = (p: any, alignRight: boolean) => {
       return (
         <div key={p.playerId} data-testid="match-player" style={{ display: "grid", gap: "0.375rem", justifyItems: alignRight ? "end" : "start" }}>
           <span style={{ fontWeight: 900 }}>{p.displayName}</span>
-          {canManageLive && !isRoundRobinSession && !isLocked && (
+          {canManageLive && session?.manualPlayerAssignment !== false && !isRoundRobinSession && !isLocked && (
             <select
               value=""
               onChange={(e) => { if (e.target.value) handleSwapPlayer(m.id, p.playerId, e.target.value); }}
@@ -1157,6 +1173,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             {canManageLive && boardPath && (
               <a
                 href={`/board/${encodeURIComponent(session.scoreCode!)}/connect`}
+                target="_blank"
+                rel="noopener noreferrer"
                 style={{
                   height: 42,
                   padding: "0 0.875rem",
@@ -1192,9 +1210,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             {isStartingSession ? "Starting..." : "Start Playing"}
           </button>
         )}
-        {canControlSession && session.status === "active" && (
+        {canControlSession && (session.status === "active" || session.status === "paused") && (
           <button data-testid="complete-session-btn" onClick={handleCompleteSession} disabled={isCompletingSession} aria-busy={isCompletingSession || undefined} style={{ ...secondaryActionStyle, color: "var(--danger)", cursor: isCompletingSession ? "default" : "pointer", opacity: isCompletingSession ? 0.55 : 1 }}>
             {isCompletingSession ? "Completing..." : "Complete Session"}
+          </button>
+        )}
+        {canControlSession && session.status === "completed" && (
+          <button onClick={handleResumeSession} disabled={isResumingSession} aria-busy={isResumingSession || undefined} style={{ ...primaryActionStyle, cursor: isResumingSession ? "default" : "pointer", opacity: isResumingSession ? 0.55 : 1 }}>
+            {isResumingSession ? "Reopening..." : "Reopen with manual court control"}
           </button>
         )}
         {canControlSession && session.status === "paused" && (
@@ -1202,9 +1225,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
             {isResumingSession ? "Resuming..." : "Resume Playing"}
           </button>
         )}
-        {canControlSession && (
+        {canControlSession && (session.status === "active" || session.status === "paused") && (
           <button onClick={handleDeleteSession} disabled={isDeletingSession} aria-busy={isDeletingSession || undefined} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid rgba(240,62,62,0.3)", cursor: isDeletingSession ? "default" : "pointer", opacity: isDeletingSession ? 0.55 : 1 }}>
-            {isDeletingSession ? "Cancelling..." : "Cancel / Delete Session"}
+            {isDeletingSession ? "Cancelling..." : "Cancel session"}
+          </button>
+        )}
+        {canControlSession && session.status === "completed" && (
+          <button onClick={handlePermanentDeleteSession} disabled={isDeletingSession} aria-busy={isDeletingSession || undefined} style={{ ...secondaryActionStyle, color: "var(--danger)", border: "1px solid var(--danger)", cursor: isDeletingSession ? "default" : "pointer", opacity: isDeletingSession ? 0.55 : 1 }}>
+            {isDeletingSession ? "Deleting forever..." : "Delete permanently"}
           </button>
         )}
         </div>
@@ -1219,12 +1247,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           onDisable={handleDisableCourt}
           onAvailabilityChange={async () => {
             if (isRoundRobinSession) return;
-            const updateGames = await requestConfirmation({
-              title: "Update the next games?",
-              description: "New games will use the available courts. Current and completed games stay unchanged.",
-              confirmLabel: "Update games",
-            });
-            if (updateGames) await handleRebalance("settings_changed");
+            await handleRebalance("settings_changed");
           }}
         />
       )}
@@ -1428,6 +1451,8 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                     {isAddingSessionGuest ? "Adding..." : "Add guest"}
                   </button>
                 </form>
+                <button type="button" onClick={() => setShowBulkGuests((value) => !value)} style={{ marginTop: "0.625rem", minHeight: 40, padding: "0 0.875rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", fontWeight: 800 }}>{showBulkGuests ? "Hide bulk add" : "Bulk add players"}</button>
+                {showBulkGuests && <div style={{ marginTop: "0.625rem", display: "grid", gap: "0.625rem" }}><textarea className="pb-input" rows={4} value={bulkGuestNames} onChange={(e) => setBulkGuestNames(e.target.value)} placeholder="Enter names separated by commas or new lines\ne.g. Alex, Mei, Sam, Priya" aria-label="Bulk guest names" /><div style={{ display: "flex", gap: "0.5rem" }}><button type="button" onClick={handleAddBulkGuests} disabled={!bulkGuestNames.trim() || isAddingBulkGuests} style={{ ...primaryActionStyle, height: 40, opacity: bulkGuestNames.trim() && !isAddingBulkGuests ? 1 : 0.5 }}>{isAddingBulkGuests ? "Adding..." : "Add all"}</button><button type="button" onClick={() => { setBulkGuestNames(""); setShowBulkGuests(false); }} style={{ height: 40, padding: "0 1rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", fontWeight: 800 }}>Cancel</button></div></div>}
               </div>
             </div>
           ) : matches.length === 0 ? (
@@ -1479,7 +1504,14 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 textAlign: "center",
               }}>
                 <p style={{ fontFamily: "var(--font-display-tight)", fontWeight: 900 }}>{court.name}</p>
-                <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>
+                {session?.manualCourtProgression === true && doneMatches.some((match) => match.courtId === court.courtId) ? (
+                  <>
+                    <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Game finished — ready when you are.</p>
+                    {canManageLive && <button className="pb-btn pb-btn-volt" onClick={() => handleStartNextGame(court.courtId)} disabled={startingCourtId !== null} style={{ width: "auto", margin: "0.75rem auto 0", opacity: startingCourtId === court.courtId ? 0.6 : 1 }}>
+                      {startingCourtId === court.courtId ? "Starting…" : "Start next game"}
+                    </button>}
+                  </>
+                ) : <p style={{ color: "var(--text-3)", fontSize: "0.875rem" }}>Waiting for players…</p>}
               </div>
             );
           })}
@@ -1804,6 +1836,11 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
                 {isAddingSessionGuest ? "Adding…" : "+ Add Guest"}
               </button>
             </form>
+            <button type="button" onClick={() => setShowBulkGuests((value) => !value)} style={{ marginTop: "0.625rem", minHeight: 40, padding: "0 0.875rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", fontWeight: 800 }}>{showBulkGuests ? "Hide bulk add" : "Bulk add players"}</button>
+            {showBulkGuests && <div style={{ marginTop: "0.625rem", display: "grid", gap: "0.625rem" }}>
+              <textarea className="pb-input" rows={4} value={bulkGuestNames} onChange={(e) => setBulkGuestNames(e.target.value)} placeholder="Enter names separated by commas or new lines\ne.g. Alex, Mei, Sam, Priya" aria-label="Bulk guest names" />
+              <div style={{ display: "flex", gap: "0.5rem" }}><button type="button" onClick={handleAddBulkGuests} disabled={!bulkGuestNames.trim() || isAddingBulkGuests} style={{ minHeight: 40, padding: "0 1rem", border: "none", borderRadius: "var(--r-md)", background: "var(--ink-800)", color: "var(--volt-500)", fontWeight: 900, opacity: bulkGuestNames.trim() && !isAddingBulkGuests ? 1 : 0.5 }}>{isAddingBulkGuests ? "Adding..." : "Add all"}</button><button type="button" onClick={() => { setBulkGuestNames(""); setShowBulkGuests(false); }} style={{ minHeight: 40, padding: "0 1rem", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)", fontWeight: 800 }}>Cancel</button></div>
+            </div>}
           </div>
         </section>
       )}
@@ -1837,30 +1874,6 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
         </div>
       )}
 
-      {/* Rebalance summary modal */}
-      {showSummaryModal && rebalanceSummary && (
-        <div style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(22,36,28,0.52)",
-          display: "grid",
-          placeItems: "center",
-          zIndex: 500,
-          padding: "1rem",
-        }}>
-          <div style={{ background: "var(--surface)", borderRadius: "var(--r-xl)", padding: "1.25rem", maxWidth: 440, width: "100%", boxShadow: "var(--shadow-lg)" }}>
-            <h2 style={{ fontFamily: "var(--font-display-tight)", fontSize: "1.25rem", fontWeight: 900, marginBottom: "0.75rem" }}>Rebalance Complete</h2>
-            <p style={{ color: "var(--text-2)", lineHeight: 1.5 }}>{rebalanceSummary}</p>
-            <button
-              onClick={() => setShowSummaryModal(false)}
-              className="pb-btn pb-btn-volt"
-              style={{ marginTop: "1rem" }}
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
       {confirmationDialog}
     </div>
   );

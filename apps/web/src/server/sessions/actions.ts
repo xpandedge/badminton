@@ -75,6 +75,8 @@ export interface CreateSessionInput {
   socialPlayMode?: SocialPlayMode;
   venueName?: string;
   startsAtIso?: string;
+  manualPlayerAssignment?: boolean;
+  manualCourtProgression?: boolean;
 }
 
 export interface SessionRsvpCapacityInput {
@@ -225,6 +227,8 @@ export async function createSession(
     scoreCode,
     scoreLinkEnabled: true,
     boardEnabled: true,
+    manualPlayerAssignment: input.manualPlayerAssignment !== false,
+    manualCourtProgression: input.manualCourtProgression === true,
     scheduleGeneratedAt: null,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -342,7 +346,7 @@ export async function repeatSession(
 // ── Session lifecycle helpers ─────────────────────────────────────────────────
 
 const STATUS_TRANSITIONS: Record<string, { from: string[]; action: string }> = {
-  active: { from: ["draft", "scheduled"], action: "session_started" },
+  active: { from: ["draft", "scheduled", "completed"], action: "session_started" },
   paused: { from: ["active"], action: "session_paused" },
   completed: { from: ["active", "paused"], action: "session_completed" },
 };
@@ -407,6 +411,9 @@ export async function updateSessionStatus(
       t.update(sessionRef, {
         status: statusTo,
         ...(isStart ? { startedAt: FieldValue.serverTimestamp() } : {}),
+        ...(statusTo === "active" && data.status === "completed"
+          ? { manualPlayerAssignment: true, manualCourtProgression: true }
+          : {}),
         updatedAt: FieldValue.serverTimestamp(),
       });
 
@@ -793,6 +800,31 @@ export async function deleteSession(sessionId: string): Promise<ActionResult<voi
     if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
     if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
     throw e;
+  }
+}
+
+/** Permanently removes a session and every nested collection. */
+export async function permanentlyDeleteSession(sessionId: string): Promise<ActionResult<void>> {
+  const user = await requireSession().catch(() => null);
+  if (!user) return err("UNAUTHENTICATED", "Must be signed in");
+  const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, user.uid);
+  if (!activeSquad.ok) return activeSquad;
+
+  try {
+    const sessionRef = db.doc(`sessions/${sessionId}`);
+    const sessionSnap = await sessionRef.get();
+    if (!sessionSnap.exists) return err("NOT_FOUND", "Session not found");
+    const memberSnap = await db.doc(`groups/${activeSquad.data.groupId}/members/${user.uid}`).get();
+    const role = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }).role ?? null : null;
+    if (!canDeleteSession(role)) return err("FORBIDDEN", "Only group owners and admins can permanently delete sessions");
+
+    await db.recursiveDelete(sessionRef);
+    return ok(undefined);
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    return err("INTERNAL", e.message || "Could not permanently delete session");
   }
 }
 

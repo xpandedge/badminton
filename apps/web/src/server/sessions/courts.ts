@@ -6,9 +6,10 @@ import { getAdminDb } from "@/server/firebase/admin";
 import { requireSession } from "@/server/auth/dal";
 import { ok, err, type ActionResult } from "@/server/result";
 import { changeCourts, type CourtChange } from "@/lib/sessions/courts";
+import type { SessionCourt } from "@/lib/sessions/types";
 import { requireActiveSessionSquad } from "./actions";
 
-export async function saveLiveCourt(sessionId: string, change: CourtChange): Promise<ActionResult<void>> {
+export async function saveLiveCourt(sessionId: string, change: CourtChange): Promise<ActionResult<SessionCourt[]>> {
   const user = await requireSession().catch(() => null);
   if (!user) return err("UNAUTHENTICATED", "Must be signed in");
   const db = getAdminDb();
@@ -28,7 +29,7 @@ export async function saveLiveCourt(sessionId: string, change: CourtChange): Pro
       catch (e) { return err("INVALID_ARGUMENT", e instanceof Error ? e.message : "Invalid court details"); }
       t.update(ref, { courts, courtCount: courts.filter(c => c.isActive).length, updatedAt: FieldValue.serverTimestamp() });
       t.set(ref.collection("auditLogs").doc(), { actorUid: user.uid, action: change.courtId ? "court/updated" : "court/added", details: change, createdAt: FieldValue.serverTimestamp() });
-      return ok(undefined);
+      return ok(courts);
     });
   } catch (e) {
     console.error("saveLiveCourt error:", e);

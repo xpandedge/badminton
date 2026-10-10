@@ -493,6 +493,55 @@ export async function startScheduledMatch(
   return ok(undefined);
 }
 
+export async function updateLiveProgression(
+  sessionId: string,
+  manualCourtProgression: boolean,
+): Promise<ActionResult<void>> {
+  const session = await requireSession().catch(() => null);
+  if (!session) return err("UNAUTHENTICATED", "Must be signed in");
+  if (!sessionId) return err("INVALID_ARGUMENT", "sessionId is required");
+
+  const db = getAdminDb();
+  const activeSquad = await requireActiveSessionSquad(db, sessionId, session.uid);
+  if (!activeSquad.ok) return activeSquad;
+
+  try {
+    await db.runTransaction(async (t) => {
+      const sessionRef = db.doc(`sessions/${sessionId}`);
+      const sessionSnap = await t.get(sessionRef);
+      if (!sessionSnap.exists) throw Object.assign(new Error("Session not found"), { code: "NOT_FOUND" });
+
+      const data = sessionSnap.data()!;
+      const memberSnap = await t.get(db.doc(`groups/${data.groupId}/members/${session.uid}`));
+      const role = memberSnap.exists ? (memberSnap.data() as { role?: GroupRole }).role ?? null : null;
+      if (!canCreateSession(role)) {
+        throw Object.assign(new Error("Only group owners and admins can change live session settings"), { code: "FORBIDDEN" });
+      }
+      if (data.status !== "active" && data.status !== "paused") {
+        throw Object.assign(new Error("Live progression can only be changed during an active or paused session"), { code: "FAILED_PRECONDITION" });
+      }
+
+      t.update(sessionRef, {
+        manualCourtProgression,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      t.set(db.collection(`sessions/${sessionId}/auditLogs`).doc(), {
+        actorUid: session.uid,
+        action: "session/progression_changed",
+        details: { manualCourtProgression },
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  } catch (e: any) {
+    if (e.code === "NOT_FOUND") return err("NOT_FOUND", e.message);
+    if (e.code === "FORBIDDEN") return err("FORBIDDEN", e.message);
+    if (e.code === "FAILED_PRECONDITION") return err("FAILED_PRECONDITION", e.message);
+    throw e;
+  }
+
+  return ok(undefined);
+}
+
 export interface SessionSummaryData {
   id: string;
   scoreCode?: string;

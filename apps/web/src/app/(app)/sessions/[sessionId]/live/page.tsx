@@ -2,7 +2,7 @@
 
 import { use, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { generateSchedule, generateRoundRobinSchedule, startSession, startScheduledMatch, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession, permanentlyDeleteSession } from "@/lib/sessions/live";
+import { generateSchedule, generateRoundRobinSchedule, startSession, startScheduledMatch, updateLiveProgression, pauseSession, resumeSession, completeSession, watchMatches, watchLeaderboard, watchTeamLeaderboard, watchEngineState, deleteSession, permanentlyDeleteSession } from "@/lib/sessions/live";
 import { rebalanceSession, updatePlayerStatus, addLatePlayer, swapPlayers, disableCourt, markPlayerInjured, addGuestPlayerToSession } from "@/lib/sessions/rebalance";
 import { watchSession, watchSessionPlayers } from "@/lib/sessions/sessions";
 import { watchGroupPlayers } from "@/lib/players/players";
@@ -93,6 +93,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
   const [swappingPlayerKey, setSwappingPlayerKey] = useState<string | null>(null);
   const [startingCourtId, setStartingCourtId] = useState<string | null>(null);
   const [startingMatchId, setStartingMatchId] = useState<string | null>(null);
+  const [isUpdatingProgression, setIsUpdatingProgression] = useState(false);
   const [isSelfJoining, setIsSelfJoining] = useState(false);
   const [groupPlayers, setGroupPlayers] = useState<Array<{ id: string; displayName: string; userId?: string | null }>>([]);
   const [sessionGuestName, setSessionGuestName] = useState("");
@@ -658,6 +659,20 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
     try { await startScheduledMatch({ sessionId, matchId }); }
     catch (e: any) { setActionError(e.message); }
     finally { setStartingMatchId(null); }
+  };
+
+  const handleProgressionChange = async (manualCourtProgression: boolean) => {
+    if (isUpdatingProgression) return;
+    setIsUpdatingProgression(true);
+    setActionError(null);
+    try {
+      await updateLiveProgression({ sessionId, manualCourtProgression });
+      setSession((current) => current ? { ...current, manualCourtProgression } : current);
+      if (!manualCourtProgression && !isRoundRobinSession) {
+        await handleRebalance("settings_changed");
+      }
+    } catch (e: any) { setActionError(e.message); }
+    finally { setIsUpdatingProgression(false); }
   };
 
   const handleCompleteSession = async () => {
@@ -1260,6 +1275,18 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
           </button>
         )}
         </div>
+        {canControlSession && (session.status === "active" || session.status === "paused") && (
+          <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", paddingTop: "0.25rem", color: "var(--text-2)", fontSize: "0.875rem" }}>
+            <input
+              type="checkbox"
+              checked={session.manualCourtProgression === true}
+              onChange={(event) => { void handleProgressionChange(event.target.checked); }}
+              disabled={isUpdatingProgression}
+              aria-busy={isUpdatingProgression || undefined}
+            />
+            <span><strong style={{ color: "var(--text-1)" }}>Manual game starts</strong><br /><small>Start each game yourself.</small></span>
+          </label>
+        )}
       </section>
 
       {/* Courts management */}

@@ -32,7 +32,6 @@ export default function NewSessionPage() {
   const [scoringMode, setScoringMode] = useState<ScoringMode>("points");
   const [sessionFormat, setSessionFormat] = useState<"social_rotation" | "fixed_pair_round_robin">("social_rotation");
   const [socialPlayMode, setSocialPlayMode] = useState<SocialPlayMode>("random");
-  const [manualPlayerAssignment, setManualPlayerAssignment] = useState(true);
   const [manualCourtProgression, setManualCourtProgression] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -123,7 +122,7 @@ export default function NewSessionPage() {
         socialPlayMode: sessionFormat === "social_rotation" ? socialPlayMode : undefined,
         venueName,
         startsAtIso: scheduledTime ? new Date(scheduledTime).toISOString() : undefined,
-        manualPlayerAssignment,
+        manualPlayerAssignment: true,
         manualCourtProgression,
       });
       if (!result) throw new Error("No response from server — check admin SDK config");
@@ -456,10 +455,6 @@ export default function NewSessionPage() {
 
         <section style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--r-xl)", padding: "1.125rem", display: "grid", gap: "0.75rem" }}>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.5625rem", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-3)" }}>Game flow</div>
-          <label style={{ display: "flex", gap: "0.65rem", alignItems: "flex-start" }}>
-            <input type="checkbox" checked={manualPlayerAssignment} onChange={e => setManualPlayerAssignment(e.target.checked)} />
-            <span><strong>Allow player swaps during live games</strong><br /><small style={{ color: "var(--text-3)" }}>Swap players between courts or with someone waiting.</small></span>
-          </label>
           <label style={{ display: "flex", gap: "0.65rem", alignItems: "flex-start" }}>
             <input type="checkbox" checked={manualCourtProgression} onChange={e => setManualCourtProgression(e.target.checked)} />
             <span><strong>Ask before starting the next game</strong><br /><small style={{ color: "var(--text-3)" }}>Finished courts wait until you choose the next players.</small></span>

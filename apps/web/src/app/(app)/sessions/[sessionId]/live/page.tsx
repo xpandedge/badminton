@@ -1284,7 +1284,7 @@ export default function LiveOrganiserPage({ params }: { params: Promise<{ sessio
               disabled={isUpdatingProgression}
               aria-busy={isUpdatingProgression || undefined}
             />
-            <span><strong style={{ color: "var(--text-1)" }}>Manual game starts</strong><br /><small>Start each game yourself.</small></span>
+            <span><strong style={{ color: "var(--text-1)" }}>Manual game starts</strong><br /><small>Each game waits until you choose when to start it.</small></span>
           </label>
         )}
       </section>
